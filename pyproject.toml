@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "browser-agent"
+version = "0.1.0"
+description = "轻量级浏览器自动化 Agent 框架 — 让 VLM 像人一样操作浏览器"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+    { name = "browser-agent contributors" },
+]
+
+dependencies = [
+    "playwright>=1.50.0",
+    "playwright-stealth>=1.0.6",
+    "openai>=1.61.0",
+    "pydantic>=2.10.0",
+    "rich>=13.9.0",
+    "tenacity>=9.0.0",
+    "httpx>=0.28.0",
+    "Pillow>=11.0.0",
+]
+
+[project.optional-dependencies]
+ollama = ["ollama>=0.4.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.25.0",
+    "ruff>=0.9.0",
+]
+
+[project.scripts]
+browser-agent = "browser_agent.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/browser_agent"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
