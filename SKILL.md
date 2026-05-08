@@ -8,6 +8,7 @@ metadata:
   hermes:
     tags: [Browser-Automation, GUI-VLA, Web-Scraping, Vision-Language-Model, MCP]
     related_skills: [cli, web-development]
+    homepage: https://github.com/xyshanren/browser-agent
   mcp:
     server_name: browser-agent
     tools: [browser_navigate, browser_screenshot, browser_click, browser_type, browser_extract]
