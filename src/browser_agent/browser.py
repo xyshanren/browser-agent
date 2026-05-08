@@ -47,12 +47,14 @@ class BrowserSession:
         viewport_height: int = 720,
         screenshot_delay: float = 1.0,
         screenshot_quality: int = 70,
+        cookie_file: Optional[str] = None,
     ):
         self.headless = headless
         self.viewport_width = viewport_width
         self.viewport_height = viewport_height
         self.screenshot_delay = screenshot_delay
         self.screenshot_quality = screenshot_quality
+        self.cookie_file = cookie_file or str(Path.home() / ".browser-agent" / "cookies.json")
 
         self._playwright = None
         self._browser: Optional[PlaywrightBrowser] = None
@@ -88,10 +90,16 @@ class BrowserSession:
         # 注入 POI 检测脚本
         await page.add_init_script(FIND_POIS_JS)
 
+        # 加载持久化 Cookie
+        await self._load_cookies()
+
         logger.info(f"🌐 Browser started (headless={self.headless})")
 
     async def stop(self):
-        """关闭浏览器。"""
+        """关闭浏览器，并保存 Cookie。"""
+        # 保存持久化 Cookie
+        await self._save_cookies()
+
         if self._browser:
             await self._browser.close()
         if self._playwright:
@@ -150,6 +158,38 @@ class BrowserSession:
             text_display = text[:200].replace("\n", "⏎")
             lines.append(f"- [{i}] <{tag}{attr_str}>{text_display}</{tag}>")
         return "\n".join(lines)
+
+    # ── Cookie 持久化 ──────────────────────────────
+
+    async def _save_cookies(self):
+        """保存当前 Cookie 到文件。"""
+        if not self._context:
+            return
+        try:
+            cookies = await self._context.cookies()
+            if not cookies:
+                return
+            cookie_path = Path(self.cookie_file)
+            cookie_path.parent.mkdir(parents=True, exist_ok=True)
+            import json
+            cookie_path.write_text(json.dumps(cookies, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.info(f"🍪 已保存 {len(cookies)} 个 Cookie → {cookie_path}")
+        except Exception as e:
+            logger.warning(f"⚠️ Cookie 保存失败: {e}")
+
+    async def _load_cookies(self):
+        """从文件加载 Cookie。"""
+        cookie_path = Path(self.cookie_file)
+        if not cookie_path.exists():
+            return
+        try:
+            import json
+            cookies = json.loads(cookie_path.read_text(encoding="utf-8"))
+            if self._context and cookies:
+                await self._context.add_cookies(cookies)
+                logger.info(f"🍪 已加载 {len(cookies)} 个 Cookie ← {cookie_path}")
+        except Exception as e:
+            logger.warning(f"⚠️ Cookie 加载失败: {e}")
 
     # ── 截图 ──────────────────────────────────────
 
