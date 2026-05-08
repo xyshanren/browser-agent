@@ -69,6 +69,20 @@ browser-agent (编排器 + 监督器)
 
 详见 [docs/DESIGN.md](docs/DESIGN.md)
 
+## Mano-P 集成
+
+browser-agent 通过 Mano-P 云端 API （mano.mininglamp.com）实现纯视觉桌面 GUI 自动化：
+
+| 场景 | 方案 | 状态 |
+|:----|:----|:----:|
+| Web 浏览器 | PlaywrightExecutor + qwen3-vl:2b (Ollama) | ✅ 生产可用 |
+| 桌面软件/3D/专业工具 | ManoPExecutor + Mano-P Cloud API | ⚠️ 云端验证通过，等待 NVIDIA 生态开源 |
+
+Mano-P 模型目前仅支持 Apple Silicon（MLX 框架），NVIDIA GPU/CUDA 暂不支持。
+代码层已适配其 OpenAPI 规格，第三阶段开源后可快速切换本地推理。
+
+详见 [docs/DESIGN.md#9-mano-p-集成状态](docs/DESIGN.md)
+
 ## 集成 Hermes Agent
 
 browser-agent 可作为 Hermes Agent 的 Skill 使用：
