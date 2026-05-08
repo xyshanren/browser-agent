@@ -91,6 +91,7 @@ class BaseExecutor(ABC):
             from browser_agent.executors.playwright import PlaywrightExecutor
             return PlaywrightExecutor(**kwargs)
         elif executor_type == "mano_p":
-            raise NotImplementedError("Mano-P 执行器尚未实现")
+            from browser_agent.executors.mano_p import ManoPExecutor
+            return ManoPExecutor(**kwargs)
         else:
             raise ValueError(f"不支持的执行器类型: {executor_type}，可选: playwright, mano_p")

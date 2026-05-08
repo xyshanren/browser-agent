@@ -144,15 +144,21 @@ browser-agent/
 │   ├── agent.py              # BrowserAgent 编排器主类
 │   ├── cli.py                # CLI 入口
 │   ├── config.py             # 配置管理
-│   ├── executors/            # ← 新增：可插拔执行器
+│   ├── executors/            # ← 可插拔执行器
 │   │   ├── __init__.py       #   BaseExecutor 抽象 + 工厂
-│   │   └── playwright.py     #   Playwright 浏览器执行器
+│   │   ├── playwright.py     #   Playwright 浏览器执行器
+│   │   └── mano_p.py         #   Mano-P 桌面 GUI 执行器（实验性）
 │   ├── browser.py            # BrowserSession（Playwright 底层封装）
-│   ├── models/               # 模型客户端（不变）
-│   ├── tools/                # 工具定义（不变）
-│   ├── vision/               # POI 检测 JS（不变）
-│   └── utils/                # 工具函数（不变）
-├── tests/                    # 12 个单元测试
+│   ├── models/               # 模型客户端
+│   │   ├── base.py           #   抽象 + 工厂
+│   │   ├── ollama.py         #   Ollama 客户端
+│   │   ├── vllm.py           #   vLLM 客户端
+│   │   ├── openai.py         #   OpenAI 兼容 API
+│   │   └── mano_p.py         #   Mano-P 会话式 API 客户端
+│   ├── tools/                # 工具定义（11 个工具）
+│   ├── vision/               # POI 检测 JS
+│   └── utils/                # 工具函数
+├── tests/                    # 14 个单元测试
 └── examples/                 # 使用示例
 ```
 
