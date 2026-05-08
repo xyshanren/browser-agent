@@ -45,6 +45,6 @@ async def test_openai_client_initialization():
 async def test_ollama_client_initialization():
     """测试 OllamaClient 初始化。"""
     from browser_agent.models.ollama import OllamaClient
-    client = OllamaClient(model="qwen2.5-vl:3b", api_base="http://localhost:11434")
-    assert client.model == "qwen2.5-vl:3b"
+    client = OllamaClient(model="qwen3-vl:2b", api_base="http://localhost:11434")
+    assert client.model == "qwen3-vl:2b"
     assert client.api_base == "http://localhost:11434"

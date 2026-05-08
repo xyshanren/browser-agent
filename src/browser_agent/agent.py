@@ -153,8 +153,18 @@ class BrowserAgent:
         )
 
     def run_stream(self, task: str) -> Iterator[Step]:
-        """流式执行，yield 每一步状态。"""
-        loop = asyncio.new_event_loop()
+        """流式执行，yield 每一步状态。
+
+        注意：如果在 asyncio 事件循环中调用此方法，请改用 run_async。"""
+        try:
+            loop = asyncio.get_running_loop()
+            raise RuntimeError(
+                "run_stream() 不能在已有事件循环中调用。"
+                "请在异步环境中使用 await agent.run_async(task)。"
+            )
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+        
         async_gen = self._run_stream(task)
 
         try:
@@ -249,8 +259,12 @@ class BrowserAgent:
                     continue
 
                 finished = False
+                # 模型可能一次返回多个工具调用，使用子步骤编号
+                action_index = 0
                 for tc in tool_calls:
                     tool_name, tool_call_id, arguments = parse_tool_call(tc)
+                    sub_step = f"{step_num}.{action_index}"
+                    action_index += 1
 
                     # 检查是否完成
                     if tool_name == "finish":
@@ -272,7 +286,7 @@ class BrowserAgent:
                         break
 
                     # 执行浏览器操作
-                    logger.info(f"🛠️  {tool_name}({arguments})")
+                    logger.info(f"🛠️  [{sub_step}] {tool_name}({arguments})")
                     try:
                         result = await asyncio.wait_for(
                             execute_tool(self.browser, tool_name, arguments),
