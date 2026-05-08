@@ -19,7 +19,7 @@ class BrowserConfig:
     headless: bool = True
     viewport_width: int = 1280
     viewport_height: int = 720
-    homepage: str = "https://www.google.com"
+    homepage: str = "https://www.baidu.com"
     screenshot_delay: float = 1.0
     screenshot_quality: int = 70
 

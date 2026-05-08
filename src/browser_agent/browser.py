@@ -12,16 +12,17 @@ from playwright.async_api import Browser as PlaywrightBrowser
 from playwright.async_api import BrowserContext, Page, async_playwright
 try:
     # playwright-stealth v2.x (preferred for Python 3.12+)
-    from playwright_stealth import Stealth as StealthConfig  # type: ignore
+    from playwright_stealth import Stealth
 
-    async def stealth_async(page, **kwargs):
-        stealth = StealthConfig()
-        scripts = await stealth.apply_stealth_async(page)
-        for script in scripts:
-            await page.add_init_script(script)
+    async def stealth_page(page, **kwargs):
+        stealth = Stealth(**kwargs)
+        await stealth.apply_stealth_async(page)
 except ImportError:
     # playwright-stealth v1.x (legacy)
-    from playwright_stealth import StealthConfig, stealth_async  # type: ignore
+    from playwright_stealth import StealthConfig, stealth_async as _stealth_async
+
+    async def stealth_page(page, **kwargs):
+        await _stealth_async(page, StealthConfig(**kwargs))
 
 from browser_agent.utils.logger import logger
 
@@ -82,7 +83,7 @@ class BrowserSession:
         page.set_default_timeout(60_000)
 
         # 注入 Stealth 脚本（反爬虫）
-        await stealth_async(page, StealthConfig(navigator_user_agent=False))
+        await stealth_page(page, navigator_user_agent=False)
 
         # 注入 POI 检测脚本
         await page.add_init_script(FIND_POIS_JS)

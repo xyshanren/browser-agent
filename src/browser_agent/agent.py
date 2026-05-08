@@ -84,7 +84,7 @@ class BrowserAgent:
         action_timeout: float = 30.0,
         viewport_width: int = 1280,
         viewport_height: int = 720,
-        homepage: str = "https://www.google.com",
+        homepage: str = "https://www.baidu.com",
     ):
         self.max_steps = max_steps
         self.task_timeout = task_timeout
