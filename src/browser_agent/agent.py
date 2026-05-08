@@ -98,17 +98,44 @@ class BrowserAgent:
             viewport_height=viewport_height,
         )
 
-        # 创建模型客户端
-        kwargs = {"model": model, "api_key": api_key}
-        if api_base:
-            kwargs["api_base"] = api_base
-        self.model: BaseModelClient = BaseModelClient.create(model_type, **kwargs)
+        # 创建模型客户端（惰性初始化，避免认证错误阻碍构造）
+        self._model_type = model_type
+        self._model_name = model
+        self._api_base = api_base
+        self._api_key = api_key
+        self._model: Optional[BaseModelClient] = None
 
         # 消息历史
         self.history = MessageHistory()
 
         # 保存步骤记录
         self._steps: list[Step] = []
+
+    def __del__(self):
+        """确保浏览器资源被释放。"""
+        if hasattr(self, 'browser') and self.browser:
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(self.browser.stop())
+                loop.close()
+            except Exception:
+                pass
+
+    @property
+    def model(self) -> BaseModelClient:
+        """懒加载模型客户端。"""
+        if self._model is None:
+            kwargs = {"model": self._model_name, "api_key": self._api_key}
+            if self._api_base:
+                kwargs["api_base"] = self._api_base
+            self._model = BaseModelClient.create(self._model_type, **kwargs)
+        return self._model
+
+    @model.setter
+    def model(self, value: BaseModelClient):
+        """允许外部替换模型客户端（如注入 mock）。"""
+        self._model = value
 
     def run(self, task: str) -> AgentResult:
         """同步执行任务。"""
@@ -159,23 +186,34 @@ class BrowserAgent:
                 observation_text = f"URL: {self.browser.current_url}\n{poi_text}" if poi_text else f"URL: {self.browser.current_url}"
                 self.history.add_image(MessageRole.USER, observation_text, screenshot_b64, MessageLabel.SCREENSHOT)
 
-                # ── THINK: 调用模型 ──
+                # ── THINK: 调用模型（带重试） ──
                 messages = self.history.build_openai_messages(keep_max_screenshots=1)
 
-                try:
-                    response = await asyncio.wait_for(
-                        self.model.chat(messages, tools=BROWSER_TOOLS),
-                        timeout=self.action_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(f"⏱️ 模型响应超时 (>{self.action_timeout}s)")
-                    step = Step(number=step_num, observation="timeout", action_name="", action_result="模型响应超时")
-                    self._steps.append(step)
-                    yield step
-                    continue
-                except Exception as e:
-                    logger.error(f"❌ 模型调用失败: {e}")
-                    step = Step(number=step_num, observation="error", action_name="", action_result=f"模型调用失败: {e}")
+                response = None
+                for attempt in range(3):
+                    try:
+                        response = await asyncio.wait_for(
+                            self.model.chat(messages, tools=BROWSER_TOOLS),
+                            timeout=self.action_timeout,
+                        )
+                        break
+                    except asyncio.TimeoutError:
+                        logger.warning(f"⏱️ 模型响应超时 (>{self.action_timeout}s) 尝试 {attempt + 1}/3")
+                        if attempt < 2:
+                            await asyncio.wait_for(
+                                self.model.chat([{"role": "user", "content": "请继续。"}], tools=BROWSER_TOOLS),
+                                timeout=self.action_timeout,
+                            )
+                            continue
+                    except Exception as e:
+                        logger.error(f"❌ 模型调用失败: {e}")
+                        step = Step(number=step_num, observation="error", action_name="", action_result=f"模型调用失败: {e}")
+                        self._steps.append(step)
+                        yield step
+                        break
+                
+                if response is None:
+                    step = Step(number=step_num, observation="timeout", action_name="", action_result="模型连续超时，终止任务")
                     self._steps.append(step)
                     yield step
                     break

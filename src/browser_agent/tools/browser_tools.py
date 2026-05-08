@@ -101,6 +101,48 @@ BROWSER_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "press_key",
+            "description": "按下键盘上的特定键，支持组合键。例如 Enter, Escape, Tab, Control+a, Alt+F4",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "要按下的键名，如 Enter, Escape, Tab, Control+a, Alt+F4"},
+                },
+                "required": ["key"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "hover",
+            "description": "将鼠标悬停在指定编号的元素上，不点击",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mark_id": {"type": "integer", "description": "要悬停的元素的 Mark ID"},
+                },
+                "required": ["mark_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "extract_text",
+            "description": "提取指定编号元素的文本内容",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mark_id": {"type": "integer", "description": "要提取文本的元素的 Mark ID"},
+                },
+                "required": ["mark_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "finish",
             "description": "任务已完成，返回最终结果。在完成用户要求的任务后使用此工具提供回答。",
             "parameters": {
@@ -175,6 +217,43 @@ async def tool_wait(browser: BrowserSession) -> str:
     return "已等待 3 秒"
 
 
+async def tool_press_key(browser: BrowserSession, key: str) -> str:
+    """按键盘键。"""
+    page = browser.current_page
+    if not page:
+        return "错误: 没有打开的页面"
+    
+    # 解析组合键: "Control+a" → [("Control", "a")]
+    parts = key.split("+")
+    if len(parts) > 1:
+        modifier = parts[0]
+        character = "+".join(parts[1:])
+        await page.keyboard.press(f"{modifier}+{character}")
+    else:
+        await page.keyboard.press(key)
+    return f"已按键: {key}"
+
+
+async def tool_hover(browser: BrowserSession, mark_id: int) -> str:
+    """悬停到指定元素。"""
+    page = browser.current_page
+    if not page or mark_id < 0 or mark_id >= len(browser.poi_centroids):
+        return f"错误: 无效的 mark_id {mark_id}"
+    centroid = browser.poi_centroids[mark_id]
+    await page.mouse.move(centroid["x"], centroid["y"])
+    return f"已悬停到元素 [{mark_id}]"
+
+
+async def tool_extract_text(browser: BrowserSession, mark_id: int) -> str:
+    """提取元素文本。"""
+    page = browser.current_page
+    if not page or mark_id < 0 or mark_id >= len(browser.poi_elements):
+        return f"错误: 无效的 mark_id {mark_id}"
+    elem = browser.poi_elements[mark_id]
+    text = elem.get("text", "") or ""
+    return f"元素 [{mark_id}] 文本: {text[:500]}"
+
+
 async def tool_finish(browser: BrowserSession, answer: str) -> str:
     """任务完成，返回结果。"""
     return answer
@@ -193,6 +272,9 @@ async def execute_tool(browser: BrowserSession, tool_name: str, arguments: dict)
         "go_back": tool_go_back,
         "reload": tool_reload,
         "wait": tool_wait,
+        "press_key": tool_press_key,
+        "hover": tool_hover,
+        "extract_text": tool_extract_text,
         "finish": tool_finish,
     }
 
