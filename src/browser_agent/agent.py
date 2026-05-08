@@ -15,6 +15,7 @@ from typing import AsyncIterator, Iterator, Optional
 from browser_agent.config import Config
 from browser_agent.executors import BaseExecutor, Observation
 from browser_agent.models.base import BaseModelClient
+from browser_agent.models.router import ModelRouter, ModelSelection
 from browser_agent.tools.browser_tools import parse_tool_call
 from browser_agent.utils import MessageHistory, MessageLabel, MessageRole
 from browser_agent.utils.logger import logger
@@ -69,9 +70,9 @@ class BrowserAgent:
 
     def __init__(
         self,
-        executor_type: str = "playwright",
-        model_type: str = "ollama",
-        model: str = "qwen3-vl:2b",
+        executor_type: Optional[str] = None,
+        model_type: Optional[str] = None,
+        model: Optional[str] = None,
         api_base: Optional[str] = None,
         api_key: str = "",
         max_steps: int = 30,
@@ -83,16 +84,19 @@ class BrowserAgent:
         self.task_timeout = task_timeout
         self.action_timeout = action_timeout
 
-        # 创建执行器
-        self._executor_type = executor_type
-        self._executor_kwargs = executor_kwargs
-        self._executor: Optional[BaseExecutor] = None
-
-        # 创建模型客户端（惰性初始化）
+        # 暂存模型/执行器配置（ModelRouter 将在首次运行前解析）
         self._model_type = model_type
         self._model_name = model
         self._api_base = api_base
         self._api_key = api_key
+        self._executor_type = executor_type if executor_type else "playwright"
+        self._executor_kwargs = executor_kwargs
+
+        # 自动检测结果（惰性填充）
+        self._selection: Optional[ModelSelection] = None
+
+        # 执行器与模型（惰性初始化）
+        self._executor: Optional[BaseExecutor] = None
         self._model: Optional[BaseModelClient] = None
 
         self.history = MessageHistory()
@@ -110,14 +114,40 @@ class BrowserAgent:
         """允许外部替换执行器（测试用）。"""
         self._executor = value
 
+    async def _ensure_model(self):
+        """惰性检测模型配置并初始化模型客户端。
+
+        首次运行时调用，检测并锁定模型选择。
+        """
+        if self._model is not None:
+            return
+
+        # 自动检测模型
+        self._selection = await ModelRouter.detect(
+            model_type=self._model_type,
+            model=self._model_name,
+            api_base=self._api_base,
+            api_key=self._api_key,
+        )
+
+        # 如果选择器切换了执行器（如 Mano-P），更新执行器类型
+        if self._selection.executor_type != self._executor_type:
+            self._executor_type = self._selection.executor_type
+
+        # 创建模型客户端
+        kwargs = {"model": self._selection.model, "api_key": self._selection.api_key}
+        if self._selection.api_base:
+            kwargs["api_base"] = self._selection.api_base
+        self._model = BaseModelClient.create(self._selection.model_type, **kwargs)
+
     @property
     def model(self) -> BaseModelClient:
-        """懒加载模型客户端。"""
+        """模型客户端（同步访问，需在 _ensure_model 之后调用）。"""
         if self._model is None:
-            kwargs = {"model": self._model_name, "api_key": self._api_key}
-            if self._api_base:
-                kwargs["api_base"] = self._api_base
-            self._model = BaseModelClient.create(self._model_type, **kwargs)
+            raise RuntimeError(
+                "模型未初始化。请先调用 agent.run() 或 await agent._ensure_model()。"
+                "可通过 model_type/model 参数显式指定，或让自动检测运行。"
+            )
         return self._model
 
     @model.setter
@@ -131,6 +161,7 @@ class BrowserAgent:
 
     async def run_async(self, task: str) -> AgentResult:
         """异步执行任务。"""
+        await self._ensure_model()
         self._steps = []
         async for _ in self._run_stream(task):
             pass
@@ -153,7 +184,12 @@ class BrowserAgent:
         except RuntimeError:
             loop = asyncio.new_event_loop()
 
-        async_gen = self._run_stream(task)
+        async def _inner():
+            await self._ensure_model()
+            async for step in self._run_stream(task):
+                yield step
+
+        async_gen = _inner()
 
         try:
             while True:
