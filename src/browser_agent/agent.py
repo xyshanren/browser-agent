@@ -1,4 +1,9 @@
-"""BrowserAgent — 浏览器自动化 Agent 主类"""
+"""BrowserAgent — GUI 自动化编排器主类
+
+接收一个任务 → 使用 VLM 理解截图 → 驱动执行器操作界面 → 返回结果。
+
+支持可插拔的执行器（Playwright / Mano-P / ...）和模型后端（Ollama / vLLM / API）。
+"""
 
 from __future__ import annotations
 
@@ -7,20 +12,16 @@ import re
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Iterator, Optional
 
-from browser_agent.browser import BrowserSession
 from browser_agent.config import Config
+from browser_agent.executors import BaseExecutor, Observation
 from browser_agent.models.base import BaseModelClient
-from browser_agent.tools.browser_tools import BROWSER_TOOLS, execute_tool, parse_tool_call
+from browser_agent.tools.browser_tools import parse_tool_call
 from browser_agent.utils import MessageHistory, MessageLabel, MessageRole
 from browser_agent.utils.logger import logger
 
-# ── 系统提示词 ──
+SYSTEM_PROMPT_TEMPLATE = """You are Browser-Agent, an AI assistant that can perform actions on a computer screen.
 
-SYSTEM_PROMPT = """You are Browser-Agent, an AI assistant that can perform actions in a web browser.
-You were developed based on the Proxy-Lite architecture.
-
-You see the screen as a screenshot with interactive elements highlighted and numbered.
-You also see the available actions (tools) you can use.
+{info_for_model}
 
 For each step, you MUST respond with:
 1. <observation>Briefly describe what you see on the screen.</observation>
@@ -28,13 +29,9 @@ For each step, you MUST respond with:
 3. A tool call to perform the next action.
 
 Rules:
-- You can click numbered elements, type text, scroll, navigate to URLs, and go back.
 - Use the "finish" tool when the task is completed.
-- Be precise with element IDs.
+- Be precise with element IDs or coordinates.
 - If an action fails, try a different approach."""
-
-
-# ── 数据模型 ──
 
 
 @dataclass
@@ -58,13 +55,11 @@ class AgentResult:
     success: bool = False
 
 
-# ── Agent 主类 ──
-
-
 class BrowserAgent:
-    """浏览器自动化 Agent。
+    """GUI 自动化 Agent。
 
-    使用 VLM 模型驱动浏览器操作，实现自动化网页任务。
+    使用 VLM 模型驱动执行器（Playwright / Mano-P）操作界面。
+    执行器和模型均可插拔切换。
 
     用法：
         agent = BrowserAgent()
@@ -74,53 +69,46 @@ class BrowserAgent:
 
     def __init__(
         self,
-        model_type: str = "vllm",
-        model: str = "Qwen/Qwen2.5-VL-3B-Instruct",
+        executor_type: str = "playwright",
+        model_type: str = "ollama",
+        model: str = "qwen3-vl:2b",
         api_base: Optional[str] = None,
         api_key: str = "",
-        headless: bool = True,
         max_steps: int = 30,
         task_timeout: float = 300.0,
         action_timeout: float = 30.0,
-        viewport_width: int = 1280,
-        viewport_height: int = 720,
-        homepage: str = "https://www.baidu.com",
+        **executor_kwargs,
     ):
         self.max_steps = max_steps
         self.task_timeout = task_timeout
         self.action_timeout = action_timeout
-        self.homepage = homepage
 
-        # 创建浏览器会话
-        self.browser = BrowserSession(
-            headless=headless,
-            viewport_width=viewport_width,
-            viewport_height=viewport_height,
-        )
+        # 创建执行器
+        self._executor_type = executor_type
+        self._executor_kwargs = executor_kwargs
+        self._executor: Optional[BaseExecutor] = None
 
-        # 创建模型客户端（惰性初始化，避免认证错误阻碍构造）
+        # 创建模型客户端（惰性初始化）
         self._model_type = model_type
         self._model_name = model
         self._api_base = api_base
         self._api_key = api_key
         self._model: Optional[BaseModelClient] = None
 
-        # 消息历史
         self.history = MessageHistory()
-
-        # 保存步骤记录
         self._steps: list[Step] = []
 
-    def __del__(self):
-        """确保浏览器资源被释放。"""
-        if hasattr(self, 'browser') and self.browser:
-            try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(self.browser.stop())
-                loop.close()
-            except Exception:
-                pass
+    @property
+    def executor(self) -> BaseExecutor:
+        """惰性加载执行器。"""
+        if self._executor is None:
+            self._executor = BaseExecutor.create(self._executor_type, **self._executor_kwargs)
+        return self._executor
+
+    @executor.setter
+    def executor(self, value: BaseExecutor):
+        """允许外部替换执行器（测试用）。"""
+        self._executor = value
 
     @property
     def model(self) -> BaseModelClient:
@@ -164,7 +152,7 @@ class BrowserAgent:
             )
         except RuntimeError:
             loop = asyncio.new_event_loop()
-        
+
         async_gen = self._run_stream(task)
 
         try:
@@ -179,41 +167,40 @@ class BrowserAgent:
     async def _run_stream(self, task: str) -> AsyncIterator[Step]:
         """异步流式执行核心逻辑。"""
         # 初始化消息历史
+        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(info_for_model=self.executor.info_for_model)
         self.history = MessageHistory()
-        self.history.add_text(MessageRole.SYSTEM, SYSTEM_PROMPT, MessageLabel.SYSTEM)
+        self.history.add_text(MessageRole.SYSTEM, system_prompt, MessageLabel.SYSTEM)
         self.history.add_text(MessageRole.USER, f"Task: {task}", MessageLabel.TASK)
 
-        # 启动浏览器
-        await self.browser.start()
-        await self.browser.goto(self.homepage)
+        # 启动执行器
+        await self.executor.start()
 
         try:
             for step_num in range(self.max_steps):
                 # ── OBSERVE ──
-                screenshot_b64 = await self.browser.screenshot_base64()
-                poi_text = self.browser.poi_text
-
-                observation_text = f"URL: {self.browser.current_url}\n{poi_text}" if poi_text else f"URL: {self.browser.current_url}"
-                self.history.add_image(MessageRole.USER, observation_text, screenshot_b64, MessageLabel.SCREENSHOT)
+                obs: Observation = await self.executor.observe()
+                self.history.add_image(
+                    MessageRole.USER,
+                    obs.element_text,
+                    obs.screenshot_base64,
+                    MessageLabel.SCREENSHOT,
+                )
 
                 # ── THINK: 调用模型（带重试） ──
                 messages = self.history.build_openai_messages(keep_max_screenshots=1)
+                tools = self.executor.tools
 
                 response = None
                 for attempt in range(3):
                     try:
                         response = await asyncio.wait_for(
-                            self.model.chat(messages, tools=BROWSER_TOOLS),
+                            self.model.chat(messages, tools=tools),
                             timeout=self.action_timeout,
                         )
                         break
                     except asyncio.TimeoutError:
                         logger.warning(f"⏱️ 模型响应超时 (>{self.action_timeout}s) 尝试 {attempt + 1}/3")
                         if attempt < 2:
-                            await asyncio.wait_for(
-                                self.model.chat([{"role": "user", "content": "请继续。"}], tools=BROWSER_TOOLS),
-                                timeout=self.action_timeout,
-                            )
                             continue
                     except Exception as e:
                         logger.error(f"❌ 模型调用失败: {e}")
@@ -221,7 +208,7 @@ class BrowserAgent:
                         self._steps.append(step)
                         yield step
                         break
-                
+
                 if response is None:
                     step = Step(number=step_num, observation="timeout", action_name="", action_result="模型连续超时，终止任务")
                     self._steps.append(step)
@@ -232,7 +219,6 @@ class BrowserAgent:
                 content = response.content
                 tool_calls = response.tool_calls
 
-                # 提取 observation 和 thinking
                 obs_match = re.search(r"<observation>(.*?)</observation>", content, re.DOTALL)
                 think_match = re.search(r"<thinking>(.*?)</thinking>", content, re.DOTALL)
                 observation_text = obs_match.group(1).strip() if obs_match else ""
@@ -240,7 +226,6 @@ class BrowserAgent:
 
                 logger.info(f"🧠 Step {step_num}: {thinking_text[:200]}")
 
-                # 记录 assistant 消息
                 self.history.add_tool_calls(content, tool_calls, MessageLabel.AGENT_RESPONSE)
 
                 # ── ACT: 执行工具调用 ──
@@ -252,21 +237,18 @@ class BrowserAgent:
                         thinking=thinking_text,
                         action_name="",
                         action_result="模型未返回工具调用",
-                        screenshot_base64=screenshot_b64,
+                        screenshot_base64=obs.screenshot_base64,
                     )
                     self._steps.append(step)
                     yield step
                     continue
 
                 finished = False
-                # 模型可能一次返回多个工具调用，使用子步骤编号
                 action_index = 0
                 for tc in tool_calls:
                     tool_name, tool_call_id, arguments = parse_tool_call(tc)
-                    sub_step = f"{step_num}.{action_index}"
                     action_index += 1
 
-                    # 检查是否完成
                     if tool_name == "finish":
                         answer = arguments.get("answer", "")
                         self.history.add_tool_result(answer, tool_call_id)
@@ -277,7 +259,7 @@ class BrowserAgent:
                             action_name=tool_name,
                             action_args=arguments,
                             action_result=answer,
-                            screenshot_base64=screenshot_b64,
+                            screenshot_base64=obs.screenshot_base64,
                             finished=True,
                         )
                         self._steps.append(step)
@@ -285,18 +267,18 @@ class BrowserAgent:
                         finished = True
                         break
 
-                    # 执行浏览器操作
-                    logger.info(f"🛠️  [{sub_step}] {tool_name}({arguments})")
+                    logger.info(f"🛠️  [{step_num}.{action_index - 1}] {tool_name}({arguments})")
                     try:
                         result = await asyncio.wait_for(
-                            execute_tool(self.browser, tool_name, arguments),
+                            self.executor.act(tool_name, arguments),
                             timeout=10.0,
                         )
+                        result_text = result.text
                     except Exception as e:
-                        result = f"执行失败: {e}"
-                        logger.warning(f"⚠️ {result}")
+                        result_text = f"执行失败: {e}"
+                        logger.warning(f"⚠️ {result_text}")
 
-                    self.history.add_tool_result(result, tool_call_id)
+                    self.history.add_tool_result(result_text, tool_call_id)
 
                     step = Step(
                         number=step_num,
@@ -304,8 +286,8 @@ class BrowserAgent:
                         thinking=thinking_text,
                         action_name=tool_name,
                         action_args=arguments,
-                        action_result=result,
-                        screenshot_base64=screenshot_b64,
+                        action_result=result_text,
+                        screenshot_base64=obs.screenshot_base64,
                     )
                     self._steps.append(step)
                     yield step
@@ -314,4 +296,4 @@ class BrowserAgent:
                     return
 
         finally:
-            await self.browser.stop()
+            await self.executor.stop()

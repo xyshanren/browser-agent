@@ -45,8 +45,8 @@ def main():
         model=cfg.model.name,
         api_base=cfg.model.api_base,
         api_key=cfg.model.api_key,
-        headless=cfg.browser.headless,
         max_steps=cfg.agent.max_steps,
+        headless=cfg.browser.headless,  # 传递给 executor 的参数
     )
 
     logger.info(f"🤖 开始执行: {args.task}")
