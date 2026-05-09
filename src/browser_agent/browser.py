@@ -10,19 +10,31 @@ from typing import Optional
 
 from playwright.async_api import Browser as PlaywrightBrowser
 from playwright.async_api import BrowserContext, Page, async_playwright
+
+# playwright-stealth 作为可选依赖，支持 v1.x 和 v2.x
+# 导入失败时静默降级（不影响核心功能）
+_stealth_available = False
 try:
-    # playwright-stealth v2.x (preferred for Python 3.12+)
-    from playwright_stealth import Stealth
+    try:
+        # playwright-stealth v2.x (preferred for Python 3.12+)
+        from playwright_stealth import Stealth
 
-    async def stealth_page(page, **kwargs):
-        stealth = Stealth(**kwargs)
-        await stealth.apply_stealth_async(page)
-except ImportError:
-    # playwright-stealth v1.x (legacy)
-    from playwright_stealth import StealthConfig, stealth_async as _stealth_async
+        async def stealth_page(page, **kwargs):
+            stealth = Stealth(**kwargs)
+            await stealth.apply_stealth_async(page)
+        _stealth_available = True
+    except ImportError:
+        # playwright-stealth v1.x (legacy)
+        from playwright_stealth import StealthConfig, stealth_async as _stealth_async
 
+        async def stealth_page(page, **kwargs):
+            await _stealth_async(page, StealthConfig(**kwargs))
+        _stealth_available = True
+except Exception:
+    # playwright-stealth 依赖冲突或未安装，静默降级
     async def stealth_page(page, **kwargs):
-        await _stealth_async(page, StealthConfig(**kwargs))
+        pass
+    logger.info("playwright-stealth 未安装或依赖冲突，已降级（不影响核心功能）")
 
 from browser_agent.utils.logger import logger
 
@@ -120,7 +132,10 @@ class BrowserSession:
     # ── POI 检测 ──────────────────────────────────
 
     async def update_poi(self):
-        """执行 POI 检测，更新交互元素列表。"""
+        """执行 POI 检测，更新交互元素列表。
+
+        每次截图前重新注入 JS 并检测，防止页面导航后 JS 上下文丢失。
+        """
         page = self.current_page
         if not page:
             return
@@ -131,6 +146,8 @@ class BrowserSession:
             pass
 
         try:
+            # 重新注入 POI 检测 JS（页面导航后会丢失 init_script）
+            await page.evaluate(FIND_POIS_JS)
             result = await page.evaluate("findPOIsConvergence()")
         except Exception as e:
             logger.warning(f"POI detection failed: {e}")
@@ -228,12 +245,27 @@ class BrowserSession:
         if not page:
             raise RuntimeError("No active page")
         await page.goto(url, wait_until="domcontentloaded")
+        # 导航后清除旧 POI，下次截图时会重新检测
+        self.poi_elements = []
+        self.poi_centroids = []
 
     async def click(self, mark_id: int):
-        """点击指定编号的交互元素。"""
+        """点击指定编号的交互元素。
+
+        如果 mark_id 超出范围（页面已变化），自动触发 POI 刷新并提示模型重新观察。
+        """
         page = self.current_page
-        if not page or mark_id < 0 or mark_id >= len(self.poi_centroids):
-            raise ValueError(f"Invalid mark_id: {mark_id}")
+        if not page:
+            raise ValueError(f"Invalid mark_id: {mark_id} — 页面已关闭")
+
+        if mark_id < 0 or mark_id >= len(self.poi_centroids):
+            # 尝试刷新 POI
+            await self.update_poi()
+            if mark_id < 0 or mark_id >= len(self.poi_centroids):
+                raise ValueError(
+                    f"Invalid mark_id: {mark_id} (共 {len(self.poi_centroids)} 个元素) "
+                    f"— 页面内容已变化，请重新观察获取最新的 Mark ID"
+                )
 
         centroid = self.poi_centroids[mark_id]
         x, y = centroid["x"], centroid["y"]
@@ -242,8 +274,17 @@ class BrowserSession:
     async def type_text(self, mark_id: int, text: str, submit: bool = False):
         """在指定元素中输入文本。"""
         page = self.current_page
-        if not page or mark_id < 0 or mark_id >= len(self.poi_centroids):
-            raise ValueError(f"Invalid mark_id: {mark_id}")
+        if not page:
+            raise ValueError(f"Invalid mark_id: {mark_id} — 页面已关闭")
+
+        if mark_id < 0 or mark_id >= len(self.poi_centroids):
+            # 尝试刷新 POI
+            await self.update_poi()
+            if mark_id < 0 or mark_id >= len(self.poi_centroids):
+                raise ValueError(
+                    f"Invalid mark_id: {mark_id} (共 {len(self.poi_centroids)} 个元素) "
+                    f"— 页面内容已变化，请重新观察获取最新的 Mark ID"
+                )
 
         # 先清空再输入
         await self.click(mark_id)

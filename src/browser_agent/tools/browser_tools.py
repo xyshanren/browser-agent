@@ -280,7 +280,8 @@ async def execute_tool(browser: BrowserSession, tool_name: str, arguments: dict)
 
     func = tool_map.get(tool_name)
     if not func:
-        return f"错误: 未知工具 '{tool_name}'"
+        return (f"未知操作: '{tool_name}'。"
+                f"可用操作: {', '.join(tool_map.keys())}。请重新观察页面后选择正确的操作。")
 
     return await func(browser, **arguments)
 
