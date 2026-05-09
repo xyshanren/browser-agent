@@ -77,7 +77,7 @@ browser-agent 是纯 Python 项目，依赖全部跨平台，支持 **Linux、Wi
 | Ollama 本地 VLM | ✅ | ✅ | ✅ | ✅ |
 | vLLM GPU | ✅ 最优 | ⚠️ GPU 穿透复杂 | ⚠️ CUDA | ⚠️ Metal |
 | LM Studio | ❌ | ❌ | ✅ | ✅ |
-| Mano-P 桌面 GUI | ❌ | ❌ | ✅ | ❌ |
+| Mano-P 桌面 GUI | ❌ | ❌ | ❌ | ✅ MLX |
 
 ### WSL2 中使用（Hermes Agent 典型场景）
 

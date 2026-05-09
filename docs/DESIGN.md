@@ -292,7 +292,7 @@ browser-agent 定位为**纯 Python 跨平台工具**，所有核心依赖（pla
 | Ollama VLM | ✅ 原生安装 | ✅ 原生安装 | ✅ 原生安装 | ✅ 原生安装 | ✅ 原生安装 |
 | vLLM GPU 推理 | ✅ CUDA 最优 | ⚠️ GPU 穿透 | ⚠️ GPU 穿透 | ⚠️ CUDA | ⚠️ Metal |
 | LM Studio | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Mano-P 桌面 GUI | ❌ | ❌ | ❌ | ✅ | ✅ MLX |
+| Mano-P 桌面 GUI | ❌ | ❌ | ❌ | ❌ | ✅ MLX |
 
 ### Hermes Agent + WSL2 典型架构
 
