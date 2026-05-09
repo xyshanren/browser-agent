@@ -123,11 +123,12 @@ browser-agent 内置 ModelRouter，自动检测可用 VLM：
 | 优先级 | 模型源 | 如何启用 |
 |--------|--------|----------|
 | P0 | 用户显式指定 | `--model-type` / `--model` 参数 |
-| P1 | Mano-P 云端 | 设置 `MANOP_API_KEY` 环境变量 |
-| P2 | Ollama | 运行 `ollama serve` + 拉取 VLM 模型 |
-| P3 | vLLM | `vllm serve Qwen/Qwen2.5-VL-* --port 8000` |
-| P4 | LM Studio | 启动并加载 VLM 模型 |
-| P5 | Agent 注入 | 设置 `BROWSER_AGENT_FALLBACK_*` 环境变量 |
+| P1 | Ollama | 运行 `ollama serve` + 拉取 VLM 模型 |
+| P2 | vLLM | `vllm serve Qwen/Qwen2.5-VL-* --port 8000` |
+| P3 | LM Studio | 启动并加载 VLM 模型 |
+| P4 | Agent 注入 | 设置 `BROWSER_AGENT_FALLBACK_*` 环境变量 |
+
+Mano-P 云端 API 也已集成，代码就绪，但需要明略科技提供的 API key（`MANOP_API_KEY`），目前暂未开放注册。有 key 后可作为显式指定使用：`--model-type manop`。
 
 任何 AI Agent 可以通过环境变量将自己的模型注入 browser-agent：
 
@@ -160,10 +161,15 @@ browser-agent 内置 MCP Server，可被任何 MCP 兼容客户端调用：
 
 ## Mano-P 集成
 
+Mano-P 是明略科技开源的 GUI-VLA 模型，代码已集成，但暂未默认启用。
+
 | 场景 | 方案 | 状态 |
 |:----|:------|:----:|
 | Web 浏览器 | PlaywrightExecutor + 本地 VLM | ✅ 生产可用 |
-| 桌面软件/3D/专业工具 | ManoPExecutor + Mano-P Cloud API | ⚠️ 云端可用，等待 NVIDIA 生态开源 |
+| 桌面软件/3D/专业工具 | ManoPExecutor + Mano-P Cloud API | ⚠️ 代码就绪，需 `MANOP_API_KEY`（暂未开放注册） |
+| Mano-P 本地推理 | 直接在本地运行模型 | ⏳ 仅 macOS Apple Silicon，等待 NVIDIA CUDA 开源 |
+
+> 注意：Mano-P 不在自动检测队列中。持有了 `MANOP_API_KEY` 后通过 `--model-type manop` 显式指定即可使用。
 
 ## 测试
 

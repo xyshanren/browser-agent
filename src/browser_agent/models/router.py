@@ -4,8 +4,8 @@
 
 检测优先级:
     P0: 显式指定参数 (model_type/model 非 None) → 跳过检测
-    P1: Mano-P 云端 API (MANOP_API_KEY 已配置) → 专用 GUI 模型
-    P2: 本地 VLM (Ollama → vLLM → LM Studio) → 隐私优先
+    P1: 本地 VLM (Ollama → vLLM → LM Studio) → 隐私优先
+    P2: Mano-P 云端 API (MANOP_API_KEY 已配置) → 专用 GUI 模型
     P3: Agent 模型注入 (BROWSER_AGENT_FALLBACK_* 环境变量) → 降级托底
 
 使用方法:
@@ -83,7 +83,13 @@ class ModelRouter:
             logger.info(f"model router: explicit config → {model_type}/{selected.model}")
             return selected
 
-        # P1: Mano-P 云端 API
+        # P1: 本地 VLM 自动检测
+        local = await cls._detect_local_vlm()
+        if local:
+            logger.info(f"model router: local VLM detected → {local.source}/{local.model}")
+            return local
+
+        # P2: Mano-P 云端 API（需 MANOP_API_KEY）
         manop_key = api_key or os.getenv(ENV_MANOP_API_KEY, "")
         if manop_key:
             logger.info("model router: Mano-P cloud API available ✓")
@@ -96,12 +102,6 @@ class ModelRouter:
                 source="manop",
                 auto_detected=True,
             )
-
-        # P2: 本地 VLM 自动检测
-        local = await cls._detect_local_vlm()
-        if local:
-            logger.info(f"model router: local VLM detected → {local.source}/{local.model}")
-            return local
 
         # P3: Agent 模型注入 (fallback)
         fallback = cls._get_fallback_config()

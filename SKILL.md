@@ -44,9 +44,10 @@ required_environment_variables: []
 | 优先级 | 模型源 | 检测方式 |
 |--------|--------|----------|
 | P0 | 显式指定 | `--model-type` / `--model` 参数 |
-| P1 | Mano-P 云端 API | 自动检测 `MANOP_API_KEY` 环境变量 |
-| P2 | 本地 VLM (Ollama / vLLM / LM Studio) | 自动 ping localhost 端口 |
-| P3 | Agent 模型注入 | `BROWSER_AGENT_FALLBACK_*` 环境变量 |
+| P1 | 本地 VLM (Ollama / vLLM / LM Studio) | 自动 ping localhost 端口 |
+| P2 | Agent 模型注入 | `BROWSER_AGENT_FALLBACK_*` 环境变量 |
+
+Mano-P 云端 API 也已集成（代码就绪，需 `MANOP_API_KEY`），有 key 后通过 `--model-type manop` 显式指定即可。
 
 ## 使用方法
 
