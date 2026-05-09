@@ -16,7 +16,7 @@ prerequisites:
   commands: [python3, pip3]
   env_vars: []
   run_once:
-    - command: pip3 install browser-agent playwright
+    - command: pip3 install gui-agent-vlm playwright
       description: 安装 browser-agent 及其依赖
     - command: python3 -m playwright install chromium
       description: 安装 Playwright 浏览器引擎
@@ -215,7 +215,7 @@ browser-agent 作为独立 Python 包，支持被多个 Agent 框架共享：
 ### 方式 A: pip 安装（推荐）
 
 ```bash
-pip install browser-agent
+pip install gui-agent-vlm
 # 直接 import 使用
 ```
 
