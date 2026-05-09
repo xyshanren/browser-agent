@@ -58,6 +58,16 @@ class BaseExecutor(ABC):
         """
         ...
 
+    async def screenshot(self) -> bytes:
+        """快速截图（轻量，不包含 POI 检测）。
+
+        默认实现通过 observe() 提取截图，执行器可重写以提高性能。
+        用于监督纠错模块的截图比对。
+        """
+        obs = await self.observe()
+        import base64
+        return base64.b64decode(obs.screenshot_base64)
+
     @abstractmethod
     async def act(self, action_name: str, arguments: dict) -> ActionResult:
         """执行一个动作，返回执行结果。

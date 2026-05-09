@@ -16,6 +16,7 @@ from browser_agent.config import Config
 from browser_agent.executors import BaseExecutor, Observation
 from browser_agent.models.base import BaseModelClient
 from browser_agent.models.router import ModelRouter, ModelSelection
+from browser_agent.supervisor import Supervisor, VerificationResult
 from browser_agent.tools.browser_tools import parse_tool_call
 from browser_agent.utils import MessageHistory, MessageLabel, MessageRole
 from browser_agent.utils.logger import logger
@@ -45,6 +46,7 @@ class Step:
     action_args: dict = field(default_factory=dict)
     action_result: str = ""
     screenshot_base64: Optional[str] = None
+    verification: Optional[VerificationResult] = None
     finished: bool = False
 
 
@@ -78,6 +80,7 @@ class BrowserAgent:
         max_steps: int = 30,
         task_timeout: float = 300.0,
         action_timeout: float = 30.0,
+        supervision_threshold: float = 0.0,
         **executor_kwargs,
     ):
         self.max_steps = max_steps
@@ -98,6 +101,10 @@ class BrowserAgent:
         # 执行器与模型（惰性初始化）
         self._executor: Optional[BaseExecutor] = None
         self._model: Optional[BaseModelClient] = None
+
+        # 监督纠错（阈值 > 0 时启用）
+        self._supervisor_enabled = supervision_threshold > 0
+        self._supervisor = Supervisor(threshold=supervision_threshold) if self._supervisor_enabled else None
 
         self.history = MessageHistory()
         self._steps: list[Step] = []
@@ -303,16 +310,49 @@ class BrowserAgent:
                         finished = True
                         break
 
-                    logger.info(f"🛠️  [{step_num}.{action_index - 1}] {tool_name}({arguments})")
-                    try:
-                        result = await asyncio.wait_for(
-                            self.executor.act(tool_name, arguments),
-                            timeout=10.0,
-                        )
-                        result_text = result.text
-                    except Exception as e:
-                        result_text = f"执行失败: {e}"
-                        logger.warning(f"⚠️ {result_text}")
+                    # ── 监督：记录执行前截图 ──
+                    if self._supervisor_enabled and self._supervisor:
+                        try:
+                            before_bytes = await self.executor.screenshot()
+                            self._supervisor.record_before(before_bytes)
+                        except Exception as e:
+                            logger.debug(f"supervisor: 执行前截图失败: {e}")
+
+                    # ── 执行动作（带重试） ──
+                    attempt = 0
+                    while attempt <= Supervisor.MAX_RETRIES:
+                        logger.info(f"🛠️  [{step_num}.{action_index - 1}] 尝试 {attempt + 1}/{Supervisor.MAX_RETRIES + 1}: {tool_name}({arguments})")
+                        try:
+                            result = await asyncio.wait_for(
+                                self.executor.act(tool_name, arguments),
+                                timeout=10.0,
+                            )
+                            result_text = result.text
+                        except Exception as e:
+                            result_text = f"执行失败: {e}"
+                            logger.warning(f"⚠️ {result_text}")
+
+                        # ── 监督：截图比对验证 ──
+                        verification = None
+                        if self._supervisor_enabled and self._supervisor:
+                            try:
+                                after_bytes = await self.executor.screenshot()
+                                verification = self._supervisor.verify(
+                                    after_bytes,
+                                    action_name=tool_name,
+                                    action_args=arguments,
+                                )
+
+                                # 如果截图无变化，重试
+                                if self._supervisor.should_retry(verification, attempt):
+                                    logger.warning(f"🔄 动作 '{tool_name}' 无视觉变化，重试 {attempt + 1}/{Supervisor.MAX_RETRIES}")
+                                    attempt += 1
+                                    continue
+                            except Exception as e:
+                                logger.debug(f"supervisor: 截图验证失败: {e}")
+
+                        # 动作成功或有变化，退出重试循环
+                        break
 
                     self.history.add_tool_result(result_text, tool_call_id)
 
@@ -324,6 +364,7 @@ class BrowserAgent:
                         action_args=arguments,
                         action_result=result_text,
                         screenshot_base64=obs.screenshot_base64,
+                        verification=verification,
                     )
                     self._steps.append(step)
                     yield step
