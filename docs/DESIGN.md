@@ -275,6 +275,53 @@ browser-agent 编排器 ← 已有 PlaywrightExecutor 生产可用
 2. ManoPExecutor 保持不变（action 格式已对齐）
 3. 用户只需切换 `executor_type="mano_p"` 即可
 
+---
+
+## 10. 跨平台兼容性
+
+### 设计原则
+
+browser-agent 定位为**纯 Python 跨平台工具**，所有核心依赖（playwright、httpx、pillow、pydantic）均为跨平台，不存在 Windows/Linux 专有绑定。
+
+### 各平台支持矩阵
+
+| 功能 | Linux 原生 | WSL2 (Win11) | WSL2 (Win10) | Windows 原生 | macOS |
+|------|-----------|-------------|-------------|-------------|-------|
+| Playwright headless | ✅ 完全支持 | ✅ 完全支持 | ✅ 完全支持 | ✅ 完全支持 | ✅ 完全支持 |
+| Playwright headed | ✅ Xvfb/X11 | ✅ WSLg 内置 | ⚠️ 需 VcXsrv | ✅ 原生窗口 | ✅ 原生窗口 |
+| Ollama VLM | ✅ 原生安装 | ✅ 原生安装 | ✅ 原生安装 | ✅ 原生安装 | ✅ 原生安装 |
+| vLLM GPU 推理 | ✅ CUDA 最优 | ⚠️ GPU 穿透 | ⚠️ GPU 穿透 | ⚠️ CUDA | ⚠️ Metal |
+| LM Studio | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Mano-P 桌面 GUI | ❌ | ❌ | ❌ | ✅ | ✅ MLX |
+
+### Hermes Agent + WSL2 典型架构
+
+Hermes Agent 部署在 WSL2 内时：
+
+```
+WSL2 (Linux)
+├── Hermes Agent          — CLI/Python 入口
+├── browser-agent (pip)   — 编排器
+│   ├── PlaywrightExecutor
+│   └── Chromium (headless)  ← WSL2 内自有进程
+└── Ollama / vLLM         — 本地 VLM 推理
+
+Windows (可选桥接)
+└── browser-agent MCP Server  ← 用于 Mano-P 桌面 GUI 操作
+```
+
+**关键理解**：Playwright 启动的是自己管理的 Chromium 进程，不依赖系统已安装的浏览器。因此 WSL2 内的 browser-agent 完全自给自足，无需跨 WSL2/Windows 边界操作浏览器。
+
+### WSL2 → Windows 跨边界调用
+
+仅在需要 **Mano-P 桌面 GUI 自动化**（操作 Windows 桌面软件）时需要跨边界：
+
+1. Windows 上启动 `browser-agent-mcp`（MCP Server）
+2. WSL2 中的 Hermes Agent 通过 `http://host.docker.internal:PORT` 连接
+3. 或通过 SSH 隧道转发 MCP 的 stdio 通道
+
+当前 Playwright 浏览器自动化场景完全不需要此桥接。
+
 ### 当前可用的执行方案
 
 | 场景 | 推荐方案 | 执行器 | 模型 |

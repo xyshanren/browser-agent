@@ -138,6 +138,19 @@ print('综合:', r1.text, r2.text)
 6. **耗时任务**: 模型推理需要时间，每步约 5-15 秒。
 7. **反爬检测**: 部分网站可能拦截自动化操作，可尝试 `--no-headless` 降低被检测概率。
 
+### 跨平台说明
+
+browser-agent 是纯 Python 项目，**Android 和 iOS 除外**，主流平台均可运行：
+
+| 平台 | Playwright headless | Playwright headed | Ollama | 备注 |
+|------|-------------------|-------------------|--------|------|
+| Linux 原生 | ✅ | ✅ 需 Xvfb/X11 | ✅ | 服务器部署首选 |
+| WSL2 | ✅ | ✅ WSLg(Win11)/Xvfb(Win10) | ✅ | Hermes Agent 典型场景 |
+| Windows 原生 | ✅ | ✅ | ✅ | 桌面自动化首选 |
+| macOS | ✅ | ✅ | ✅ | 开发调试友好 |
+
+**WSL2 关键说明**：Playwright 在 WSL2 中 headless 模式运行无需任何额外配置。Hermes Agent 与 browser-agent 都装在 WSL2 内即可正常使用。如需操作 Windows 桌面 GUI（Mano-P），可通过 MCP Server 桥接。详见 [跨平台支持](README.md#跨平台支持)。
+
 ---
 
 ## MCP Server 模式

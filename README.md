@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](pyproject.toml)
 [![Playwright](https://img.shields.io/badge/Playwright-1.50+-green.svg)](pyproject.toml)
-[![Ollama](https://img.shields.io/badge/Ollama-qwen3--vl:2b-orange.svg)](https://ollama.com)
+[![MCP](https://img.shields.io/badge/MCP-ready-purple.svg)](SKILL.md)
 
 </div>
 
@@ -18,7 +18,6 @@
 ```bash
 pip install browser-agent
 playwright install chromium
-ollama pull qwen3-vl:2b  # 下载 VLM 模型（~2GB）
 ```
 
 ### 使用
@@ -26,85 +25,150 @@ ollama pull qwen3-vl:2b  # 下载 VLM 模型（~2GB）
 ```python
 from browser_agent import BrowserAgent
 
-agent = BrowserAgent()  # 默认: Playwright + Ollama qwen3-vl:2b
+# 自动检测可用模型（Mano-P > Ollama > vLLM > LM Studio）
+agent = BrowserAgent()
 result = agent.run("搜索今天深圳的天气并告诉我结果")
-print(result.text)  # → "深圳今天28℃，多云，降水概率90%"
+print(result.text)
 ```
 
 或通过 CLI：
 ```bash
 browser-agent "搜索今天深圳的天气"
-browser-agent --stream --no-headless "帮我查看 GitHub 趋势"
 ```
 
-## 架构（v2.0）
-
-```
-Hermes Agent (高层规划)
-    │  "帮我查天气、整理文件、发邮件"
-    ▼
-browser-agent (编排器 + 监督器)
-    │  Observe → Think → Act → Verify
-    │
-    ├── PlaywrightExecutor (浏览器)    ← 当前已实现
-    │   └── 通过 DOM + CDP 定位元素
-    │
-    └── ManoPExecutor (桌面GUI/未来)
-        └── 纯视觉定位（不依赖任何协议）
-```
-
-- **执行器可插拔** — Playwright（Web） / Mano-P（桌面 GUI）
-- **模型可插拔** — Ollama / vLLM / OpenAI 一键切换
-- **三层架构** — Hermes Agent(规划) → browser-agent(编排) → executor(执行)
-
-## 模型后端
-
-| 后端 | 命令 | 说明 |
-|------|------|------|
-| **Ollama** (默认) | `ollama pull qwen3-vl:2b` | 本地运行，~2GB，完全离线 |
-| **vLLM** | `vllm serve Qwen/Qwen2.5-VL-3B-Instruct --port 8000` | 性能更强 |
-| **OpenAI** | 设置 `api_key` | 云端，最省资源 |
-
-## 设计文档
-
-详见 [docs/DESIGN.md](docs/DESIGN.md)
-
-## Mano-P 集成
-
-browser-agent 通过 Mano-P 云端 API （mano.mininglamp.com）实现纯视觉桌面 GUI 自动化：
-
-| 场景 | 方案 | 状态 |
-|:----|:----|:----:|
-| Web 浏览器 | PlaywrightExecutor + qwen3-vl:2b (Ollama) | ✅ 生产可用 |
-| 桌面软件/3D/专业工具 | ManoPExecutor + Mano-P Cloud API | ⚠️ 云端验证通过，等待 NVIDIA 生态开源 |
-
-Mano-P 模型目前仅支持 Apple Silicon（MLX 框架），NVIDIA GPU/CUDA 暂不支持。
-代码层已适配其 OpenAPI 规格，第三阶段开源后可快速切换本地推理。
-
-详见 [docs/DESIGN.md#9-mano-p-集成状态](docs/DESIGN.md)
-
-## 集成 Hermes Agent
-
-browser-agent 可作为 Hermes Agent 的 Skill 使用：
+### 指定模型
 
 ```bash
-# 安装 SKILL 后，在 Hermes 中直接调用
+browser-agent --model-type ollama --model qwen3-vl:2b "搜索深圳天气"
+browser-agent --model-type openai --model gpt-4o --api-key sk-xxx "搜索深圳天气"
+browser-agent --model-type manop "搜索深圳天气"  # Mano-P 云端
+```
+
+## 架构
+
+```
+Agent (高层规划)
+  │  "帮我查天气、整理文件、发邮件"
+  ▼
+browser-agent (编排器 + ModelRouter 自动选模型)
+  │  Observe → Think → Act → Verify
+  │
+  ├── PlaywrightExecutor (浏览器)
+  │   └── 通过 VLM 截图理解 + 操作
+  │
+  └── ManoPExecutor (桌面 GUI)
+      └── 纯视觉定位（Mano-P 云端 API）
+```
+
+- **执行器可插拔** — Playwright（Web）/ Mano-P（桌面 GUI）
+- **模型自动检测** — Mano-P → Ollama → vLLM → LM Studio 自动回退
+- **三种调用方式** — CLI / Python API / MCP Server
+
+## 跨平台支持
+
+browser-agent 是纯 Python 项目，依赖全部跨平台，支持 **Linux、Windows、macOS**。
+
+### 平台兼容性矩阵
+
+| 场景 | Linux 原生 | WSL2 | Windows 原生 | macOS |
+|------|-----------|------|-------------|-------|
+| Playwright headless | ✅ | ✅ | ✅ | ✅ |
+| Playwright headed | ✅ Xvfb/X11 | ✅ WSLg(Win11)/Xvfb(Win10) | ✅ | ✅ |
+| Ollama 本地 VLM | ✅ | ✅ | ✅ | ✅ |
+| vLLM GPU | ✅ 最优 | ⚠️ GPU 穿透复杂 | ⚠️ CUDA | ⚠️ Metal |
+| LM Studio | ❌ | ❌ | ✅ | ✅ |
+| Mano-P 桌面 GUI | ❌ | ❌ | ✅ | ❌ |
+
+### WSL2 中使用（Hermes Agent 典型场景）
+
+Hermes Agent 运行在 WSL2 中时，browser-agent 可直接装在 WSL2 内使用：
+
+```bash
+# WSL2 中安装
+pip install browser-agent playwright
+playwright install chromium
+playwright install-deps chromium   # 安装 Linux 系统依赖
+
+# 使用（headless 模式，无需显示环境）
 browser-agent "搜索今天深圳的天气"
 ```
 
-Skill 文件位于 Hermes Agent 的 `optional-skills/productivity/browser-agent/SKILL.md`。
+**headless 模式完全不需要显示环境**，Playwright 在 WSL2 中运行无任何障碍。
+
+如需查看浏览器窗口（调试用）：
+- **Windows 11**: WSLg 自动支持，`--no-headless` 即可
+- **Windows 10**: 需安装 X 服务器（如 VcXsrv），设置 `DISPLAY=:0`
+
+### 跨平台调用（WSL2 Hermes → Windows browser-agent）
+
+如果需要在 WSL2 中调用 Windows 原生桌面上的浏览器或 Mano-P：
+
+```bash
+# 方案 1: 全部在 WSL2 内完成（推荐）
+# browser-agent 在 WSL2 中启动自己的 Chromium 进程，无需操作 Windows 浏览器
+browser-agent "搜索深圳天气"
+
+# 方案 2: 通过 MCP 桥接 Windows
+# Windows 上启动 MCP Server
+# PowerShell: browser-agent-mcp
+# WSL2 中的 Hermes 通过 host.docker.internal:PORT 连接
+```
+
+> **关键理解**: Playwright 启动的是自己管理的 Chromium 实例，不是操作"系统上已经打开的浏览器"。因此 WSL2 里的 browser-agent 无需与 Windows 端的浏览器交互——它自己在 WSL2 中启动 Chromium 即可。
+
+## 模型选择
+
+browser-agent 内置 ModelRouter，自动检测可用 VLM：
+
+| 优先级 | 模型源 | 如何启用 |
+|--------|--------|----------|
+| P0 | 用户显式指定 | `--model-type` / `--model` 参数 |
+| P1 | Mano-P 云端 | 设置 `MANOP_API_KEY` 环境变量 |
+| P2 | Ollama | 运行 `ollama serve` + 拉取 VLM 模型 |
+| P3 | vLLM | `vllm serve Qwen/Qwen2.5-VL-* --port 8000` |
+| P4 | LM Studio | 启动并加载 VLM 模型 |
+| P5 | Agent 注入 | 设置 `BROWSER_AGENT_FALLBACK_*` 环境变量 |
+
+任何 AI Agent 可以通过环境变量将自己的模型注入 browser-agent：
+
+```bash
+export BROWSER_AGENT_FALLBACK_MODEL_TYPE=openai
+export BROWSER_AGENT_FALLBACK_MODEL=gpt-4o
+export BROWSER_AGENT_FALLBACK_API_KEY=sk-xxx
+```
+
+## MCP Server
+
+browser-agent 内置 MCP Server，可被任何 MCP 兼容客户端调用：
+
+```json
+{
+  "mcpServers": {
+    "browser-agent": {
+      "command": "python",
+      "args": ["-m", "browser_agent.mcp_server"]
+    }
+  }
+}
+```
+
+支持工具：`browser_navigate` / `browser_screenshot` / `browser_click` / `browser_type` / `browser_extract`
+
+## 作为 Agent Skill 使用
+
+参阅 [SKILL.md](SKILL.md) — 支持 CLI、Python API、MCP Server 三种集成方式。
+
+## Mano-P 集成
+
+| 场景 | 方案 | 状态 |
+|:----|:------|:----:|
+| Web 浏览器 | PlaywrightExecutor + 本地 VLM | ✅ 生产可用 |
+| 桌面软件/3D/专业工具 | ManoPExecutor + Mano-P Cloud API | ⚠️ 云端可用，等待 NVIDIA 生态开源 |
 
 ## 测试
 
 ```bash
-# 单元测试
 pytest tests/ -v
-
-# 模拟端到端
-python examples/e2e_test.py
-
-# 真实 VLM 端到端（需 Ollama + qwen3-vl:2b）
-python examples/ollama_e2e.py "你的任务描述"
 ```
 
 ## 许可证
