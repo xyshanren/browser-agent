@@ -11,6 +11,8 @@ from typing import Optional
 from playwright.async_api import Browser as PlaywrightBrowser
 from playwright.async_api import BrowserContext, Page, async_playwright
 
+from browser_agent.utils.logger import logger
+
 # playwright-stealth 作为可选依赖，支持 v1.x 和 v2.x
 # 导入失败时静默降级（不影响核心功能）
 _stealth_available = False
@@ -35,8 +37,6 @@ except Exception:
     async def stealth_page(page, **kwargs):
         pass
     logger.info("playwright-stealth 未安装或依赖冲突，已降级（不影响核心功能）")
-
-from browser_agent.utils.logger import logger
 
 # POI 检测 JavaScript — 从 proxy-lite 移植并精简
 FIND_POIS_JS = (Path(__file__).parent / "vision" / "find_pois.js").read_text(encoding="utf-8")
