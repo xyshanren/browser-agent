@@ -3,19 +3,29 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "browser-agent"
+name = "gui-agent-vlm"
 version = "0.1.0"
-description = "轻量级浏览器自动化 Agent 框架 — 让 VLM 像人一样操作浏览器"
+description = "GUI 自动化编排器 — 让 AI 通过纯视觉理解操作任何界面"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [
-    { name = "browser-agent contributors" },
+    { name = "守一", email = "lixy2017@aliyun.com" },
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
 ]
 
 dependencies = [
     "playwright>=1.50.0",
-    "playwright-stealth>=1.0.6",
     "openai>=1.61.0",
     "pydantic>=2.10.0",
     "rich>=13.9.0",
@@ -24,10 +34,17 @@ dependencies = [
     "Pillow>=11.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/xyshanren/browser-agent"
+Source = "https://github.com/xyshanren/browser-agent"
+Documentation = "https://github.com/xyshanren/browser-agent/blob/main/README.md"
+
 [project.optional-dependencies]
 ollama = ["ollama>=0.4.0"]
+stealth = ["playwright-stealth>=1.0.6"]
 manop = ["mss>=10.0.0", "pynput>=1.8.0"]
 mcp = ["mcp>=1.0.0"]
+all = ["gui-agent-vlm[ollama,stealth,manop,mcp]"]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.25.0",
@@ -40,15 +57,3 @@ browser-agent-mcp = "browser_agent.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/browser_agent"]
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "W"]
-ignore = ["E501"]
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
