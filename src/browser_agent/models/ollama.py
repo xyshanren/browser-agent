@@ -78,7 +78,7 @@ class OllamaClient(BaseModelClient):
         if tools:
             payload["tools"] = tools
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0), trust_env=False) as client:
             resp = await client.post(f"{self.api_base}/api/chat", json=payload)
             resp.raise_for_status()
             data = resp.json()
@@ -133,7 +133,7 @@ class OllamaClient(BaseModelClient):
         if tools:
             payload["tools"] = tools
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0), trust_env=False) as client:
             async with client.stream("POST", f"{self.api_base}/api/chat", json=payload) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
