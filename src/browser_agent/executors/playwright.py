@@ -78,5 +78,9 @@ class PlaywrightExecutor(BaseExecutor):
             "You see screenshots with elements highlighted by numbered markers. "
             "You can click on elements by their mark_id, type text into form fields, "
             "navigate to URLs, scroll the page, and go back. "
-            "Use the numbered markers in the screenshot to locate interactive elements."
+            "Use the numbered markers in the screenshot to locate interactive elements.\n\n"
+            "IMPORTANT: If you encounter a CAPTCHA, verification page, or any challenge "
+            "that requires human interaction (slider puzzle, image selection, checkbox), "
+            "use the 'wait_for_user' tool with a clear message describing what the user needs to do. "
+            "The user will complete it manually and the execution will continue."
         )

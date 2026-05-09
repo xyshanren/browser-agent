@@ -101,6 +101,23 @@ BROWSER_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "wait_for_user",
+            "description": "【遇到验证码/人机验证时使用】暂停执行并弹出提示，等待用户手动完成验证后按回车继续。适用于百度验证、滑块验证、图形验证等自动化无法处理的场景。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "给用户的提示信息，说明需要做什么（如'请完成滑块验证'）",
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "press_key",
             "description": "按下键盘上的特定键，支持组合键。例如 Enter, Escape, Tab, Control+a, Alt+F4",
             "parameters": {
@@ -217,6 +234,20 @@ async def tool_wait(browser: BrowserSession) -> str:
     return "已等待 3 秒"
 
 
+async def tool_wait_for_user(browser: BrowserSession, message: str = "") -> str:
+    """暂停执行，等待用户手动操作（如完成验证码）。
+
+    适用于验证码、人机验证等自动化无法处理的场景。
+    用户完成手动操作后在终端按回车继续。
+    """
+    import sys
+    msg = message or "遇到验证码，请手动完成验证"
+    print(f"\n⏸️  {msg}")
+    print("   请在浏览器中手动操作，完成后按 Enter 继续...", flush=True)
+    sys.stdin.readline()  # 等待用户按回车
+    return f"用户已手动完成操作: {msg}"
+
+
 async def tool_press_key(browser: BrowserSession, key: str) -> str:
     """按键盘键。"""
     page = browser.current_page
@@ -272,6 +303,7 @@ async def execute_tool(browser: BrowserSession, tool_name: str, arguments: dict)
         "go_back": tool_go_back,
         "reload": tool_reload,
         "wait": tool_wait,
+        "wait_for_user": tool_wait_for_user,
         "press_key": tool_press_key,
         "hover": tool_hover,
         "extract_text": tool_extract_text,
