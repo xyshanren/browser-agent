@@ -123,10 +123,10 @@ class TestSupervisedAgent:
         assert agent._supervisor is None
 
     @pytest.mark.asyncio
-    async def test_supervision_with_change_detected(self):
-        """监督检测到变化后不再重试。"""
+    async def test_supervision_verification_in_steps(self):
+        """监督启用后，Step 中包含 verification 信息。"""
         executor = MockExecutor()
-        agent = BrowserAgent(max_steps=3, supervision_threshold=0.01)
+        agent = BrowserAgent(max_steps=3, supervision_threshold=0.05)
         agent.executor = executor
         agent.model = MockModelClient([
             ModelResponse(
@@ -139,11 +139,14 @@ class TestSupervisedAgent:
             ),
         ])
 
-        result = await agent.run_async("click test")
+        result = await agent.run_async("test")
         assert result.success
-        # 监督验证了截图变化（相同截图，变化分数 ≈0，但阈值 0.01 很低）
-        # 验证 Step 中包含了 verification 信息
+        # 验证 action step 包含 verification 信息
+        has_verification = False
         for step in result.steps:
-            if step.verification:
+            if step.verification is not None:
                 assert isinstance(step.verification.score, float)
+                assert isinstance(step.verification.changed, bool)
+                has_verification = True
                 break
+        assert has_verification, "监督启用的 agent 执行后 Step 应包含 verification"
