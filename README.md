@@ -37,6 +37,24 @@ print(result.text)
 browser-agent "搜索今天深圳的天气"
 ```
 
+每一步模型输出结构化反射信息：
+```
+<reflection>
+evaluation_previous_goal: "SUCCESS: 成功点击搜索按钮，页面切换到搜索结果"
+memory: "搜索了深圳天气，结果页面有温湿度数据"
+next_goal: "提取温度27°C和湿度46%信息，调用finish返回"
+</reflection>
+```
+
+### 多标签页
+
+```python
+agent = BrowserAgent()
+agent.run("打开百度搜Python，然后在新标签页打开GitHub")
+```
+
+模型自动使用 `open_tab` / `switch_tab` / `list_tabs` 管理多页面。
+
 ### 指定模型
 
 ```bash
@@ -64,6 +82,29 @@ browser-agent (编排器 + ModelRouter 自动选模型)
 - **执行器可插拔** — Playwright（Web）/ Mano-P（桌面 GUI）
 - **模型自动检测** — Mano-P → Ollama → vLLM → LM Studio 自动回退
 - **三种调用方式** — CLI / Python API / MCP Server
+- **多标签页** — 创建、切换、关闭标签页，独立维护 POI 状态
+- **DOM 脱水** — 结合 VLM 截图 + DOM 文本树的双通道观察
+- **结构化反射** — 每步强制反思 + 步数警告 + 自动兜底
+
+## 新特性
+
+### v0.2.0 — 推理框架 + 多标签页 + 自动兜底
+
+**推理与完成规则** — System Prompt 拆分为 `<reasoning_rules>` 和 `<task_completion_rules>`，模型先读 DOM 树再找截图、判断页面变化、卡住时自动调整策略。拿到结果立即 finish，不再空转。
+
+**多标签页支持** — 新增 4 个工具：`open_tab` / `switch_tab` / `close_tab` / `list_tabs`，每个标签页独立维护交互元素状态（POI）。适用于多页面穿梭任务。
+
+**自动兜底** — 模型连续 3 次无法返回有效动作时自动 finish 带最近思考内容。`wait` 工具支持自定义秒数（1-10s）。
+
+### v0.1.1 — DOM 脱水 + 结构化反射 + 智能提示
+
+**DOM 脱水（DOM Dehydration）** — 模型不再只依赖截图"看图猜元素"。`<dehydrated_dom>` 以缩进文本树的形式列出页面上所有交互元素及其编号、层级关系。新出现的元素标记 `*[N]`，帮助模型感知页面变化。
+
+**结构化反射（Structured Reflection）** — 每步模型必须输出 `evaluation_previous_goal` / `memory` / `next_goal` 三个字段，强制反思上一步结果、记录关键记忆、明确下一步目标。8B 模型效果显著——"百度搜索深圳天气"从 6 步缩到 3 步完成。
+
+**智能提示** — 剩余 ≤5 步时注入收尾警告，累计等待 ≥5 秒注入等待警告。防止模型无限制空转。
+
+**autoFixer JSON 容错** — 6 层 JSON 解析容错，自动补齐基本类型参数（如 `"5"` → `{"mark_id": 5}`）。
 
 ## 跨平台支持
 
