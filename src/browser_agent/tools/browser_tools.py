@@ -1,7 +1,8 @@
 """浏览器工具函数定义 — 供 VLM 调用的工具集"""
 
 import json
-from typing import Any, Callable
+import re
+from typing import Any
 
 from browser_agent.browser import BrowserSession
 
@@ -322,13 +323,122 @@ async def execute_tool(browser: BrowserSession, tool_name: str, arguments: dict)
 
 
 def parse_tool_call(tool_call: dict) -> tuple[str, str, dict]:
-    """解析模型的 tool_call 响应，返回 (tool_name, tool_call_id, arguments)。"""
+    """解析模型的 tool_call 响应，返回 (tool_name, tool_call_id, arguments)。
+
+    包含 autoFixer 多层 JSON 容错：
+    1. 标准 tool_call.function.arguments 解析
+    2. 模型把 action 名当 function name 返回（非标准格式）
+    3. JSON 嵌套在 content 字段中
+    4. 双层 JSON 字符串
+    5. 基本类型参数补齐（如 click_element_by_index: 2 → {index: 2}）
+    6. 兜底默认值
+    """
+    from browser_agent.utils.logger import logger
+
     func = tool_call.get("function", {})
     tool_name = func.get("name", "")
     arguments_raw = func.get("arguments", "{}")
-    if isinstance(arguments_raw, str):
-        arguments = json.loads(arguments_raw)
-    else:
-        arguments = arguments_raw
+
+    # 检查 tool_call 本身的顶层结构（某些模型返回格式异常）
+    if not tool_name and "name" in tool_call:
+        tool_name = tool_call.get("name", "")
+
+    # ── autoFixer 多层 JSON 解析 ──
+    arguments = _fix_json_arguments(arguments_raw, tool_name, logger)
+
     tool_call_id = tool_call.get("id", "call_1")
+
     return tool_name, tool_call_id, arguments
+
+
+def _fix_json_arguments(raw: Any, tool_name: str = "", logger=None) -> dict:
+    """修复 LLM/VLM 返回的各种 JSON 格式异常。
+
+    处理策略（按优先级）：
+    1. 已是 dict → 直接返回
+    2. 标准 JSON.parse
+    3. 从文本中提取 JSON 对象
+    4. 修复嵌套引用/转义问题
+    5. 基本类型补齐为对象
+    6. 兜底返回空 dict
+    """
+    # Level 0: 已经是字典
+    if isinstance(raw, dict):
+        return raw
+
+    if not isinstance(raw, str):
+        return {}
+
+    trimmed = raw.strip()
+
+    # Level 1: 标准 JSON 解析（只接受 object/dict 类型）
+    try:
+        parsed = json.loads(trimmed)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # Level 2: 从文本中提取第一个 JSON 对象
+    json_match = re.search(r'\{[\s\S]*\}', trimmed)
+    if json_match:
+        try:
+            parsed = json.loads(json_match.group(0))
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    # Level 3: 修复嵌套引号和转义问题
+    # 有些模型返回 "\"key\": \"value\"" 形式的双 JSON 字符串
+    try:
+        unescaped = trimmed.encode('utf-8').decode('unicode_escape')
+        parsed = json.loads(unescaped)
+        if isinstance(parsed, dict):
+            return parsed
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        pass
+
+    # Level 4: 尝试 unicode_escape 后再提取 JSON
+    try:
+        unescaped = trimmed.encode('utf-8').decode('unicode_escape')
+        json_match = re.search(r'\{[\s\S]*\}', unescaped)
+        if json_match:
+            parsed = json.loads(json_match.group(0))
+            if isinstance(parsed, dict):
+                return parsed
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        pass
+
+    # Level 5: 基本类型→对象补齐（如 "2" → {"mark_id": 2}）
+    # 对于只有一个 required 字段的工具，基本类型自动补齐
+    if tool_name:
+        param_keys = _get_tool_param_keys(tool_name)
+        if len(param_keys) == 1:
+            key = param_keys[0]
+            try:
+                return {key: json.loads(trimmed)}
+            except (json.JSONDecodeError, TypeError):
+                # 字符串值直接保留
+                if isinstance(trimmed, str) and trimmed:
+                    return {key: trimmed}
+        elif len(param_keys) > 1:
+            # 多个参数但只有一个值——尝试作为第一个 required 参数
+            try:
+                val = json.loads(trimmed)
+                return {param_keys[0]: val}
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    # Level 6: 兜底
+    if logger:
+        logger.warning(f"⚠️ autoFixer: 无法解析参数 (tool={tool_name}), raw={trimmed[:200]}")
+    return {}
+
+
+def _get_tool_param_keys(tool_name: str) -> list[str]:
+    """获取指定工具的 required 参数列表（用于 autoFixer 补齐）。"""
+    for t in BROWSER_TOOLS:
+        if t["function"]["name"] == tool_name:
+            return t["function"]["parameters"].get("required", [])
+    return []

@@ -25,15 +25,29 @@ SYSTEM_PROMPT_TEMPLATE = """You are Browser-Agent, an AI assistant that can perf
 
 {info_for_model}
 
-For each step, you MUST respond with:
+<output_format>
+For each step you MUST respond with:
 1. <observation>Briefly describe what you see on the screen.</observation>
 2. <thinking>Explain your reasoning about what to do next to complete the task.</thinking>
-3. A tool call to perform the next action.
+3. <reflection>
+evaluation_previous_goal: "ASSESS your last action result. Use one word verdict (SUCCESS/FAILURE/UNCERTAIN) then explain why. If the page didn't change after your action, assume your action failed."
+memory: "NOTE important context you need to remember for future steps — what you found, what you already tried, current progress."
+next_goal: "STATE your immediate next goal in one clear sentence."
+</reflection>
+4. A tool call (click/type_text/goto/finish/etc.) to perform the next action.
+</output_format>
 
-Rules:
-- Use the "finish" tool when the task is completed.
-- Be precise with element IDs or coordinates.
-- If an action fails, try a different approach."""
+<browser_rules>
+- Use the "finish" tool when the task is fully completed.
+- Be precise with element IDs (mark_id) from the numbered markers in the screenshot.
+- If an action fails (e.g. mark_id invalid, page didn't change), try a different approach.
+- Clicking only works on elements that have a visible numbered marker in the screenshot.
+- If no markers are visible, the page may not be loaded — use wait or scroll.
+- If a CAPTCHA or bot verification appears, use wait_for_user to let the human handle it.
+- Do not repeat the same action more than 3 times without seeing a change in the page.
+- The <dehydrated_dom> shows all interactive elements as a numbered tree. Use it to understand what's available on the page — each [N] corresponds to the marker in the screenshot.
+- New elements since last step are marked with *[N]. They appeared after your last action — pay attention to them.
+</browser_rules>"""
 
 
 @dataclass
@@ -42,6 +56,10 @@ class Step:
     number: int
     observation: str = ""
     thinking: str = ""
+    reflection: str = ""              # 结构化反思文本（新增）
+    evaluation: str = ""              # evaluation_previous_goal（新增）
+    memory: str = ""                  # memory（新增）
+    next_goal: str = ""               # next_goal（新增）
     action_name: str = ""
     action_args: dict = field(default_factory=dict)
     action_result: str = ""
@@ -218,13 +236,36 @@ class BrowserAgent:
         # 启动执行器
         await self.executor.start()
 
+        # 累积等待时间（用于注入等待警告）
+        total_wait_time = 0.0
+
         try:
             for step_num in range(self.max_steps):
                 # ── OBSERVE ──
                 obs: Observation = await self.executor.observe()
+
+                # 构建包含步数信息和 DOM Dehydration 的观察文本
+                remaining = self.max_steps - step_num
+                obs_parts = [f"<step_info>\nStep {step_num + 1} of {self.max_steps} max steps\nRemaining: {remaining} steps\n</step_info>\n"]
+
+                # 注入步数警告
+                if remaining <= 5:
+                    obs_parts.append(f"<system_warning>\n⚠️ Only {remaining} steps remaining. Consider wrapping up or calling finish early.\n</system_warning>\n")
+                if remaining <= 2:
+                    obs_parts.append(f"<system_warning>\n⚠️ Critical: Only {remaining} steps left! You must finish the task or call finish immediately.\n</system_warning>\n")
+
+                # 注入等待时间警告
+                if total_wait_time >= 5:
+                    obs_parts.append(f"<system_warning>\n⚠️ You have waited {total_wait_time:.0f} seconds accumulatively. DO NOT wait any longer unless you have a good reason.\n</system_warning>\n")
+
+                # 追加元素描述（含 DOM Dehydration）
+                obs_parts.append(obs.element_text)
+
+                combined_obs_text = "\n".join(obs_parts)
+
                 self.history.add_image(
                     MessageRole.USER,
-                    obs.element_text,
+                    combined_obs_text,
                     obs.screenshot_base64,
                     MessageLabel.SCREENSHOT,
                 )
@@ -264,10 +305,29 @@ class BrowserAgent:
 
                 obs_match = re.search(r"<observation>(.*?)</observation>", content, re.DOTALL)
                 think_match = re.search(r"<thinking>(.*?)</thinking>", content, re.DOTALL)
+                reflect_match = re.search(r"<reflection>(.*?)</reflection>", content, re.DOTALL)
                 observation_text = obs_match.group(1).strip() if obs_match else ""
                 thinking_text = think_match.group(1).strip() if think_match else content
+                reflection_text = reflect_match.group(1).strip() if reflect_match else ""
+
+                # 解析结构化反射字段
+                evaluation = ""
+                memory = ""
+                next_goal = ""
+                if reflection_text:
+                    eval_m = re.search(r'evaluation_previous_goal["\']?\s*:\s*["\']?(.*?)(?=["\']?\s*\n\s*(?:memory|next_goal|$))', reflection_text, re.DOTALL)
+                    mem_m = re.search(r'memory["\']?\s*:\s*["\']?(.*?)(?=["\']?\s*\n\s*(?:next_goal|evaluation|$))', reflection_text, re.DOTALL)
+                    goal_m = re.search(r'next_goal["\']?\s*:\s*["\']?(.*?)(?=["\']?\s*$|["\']?\s*\n)', reflection_text, re.DOTALL)
+                    if eval_m:
+                        evaluation = eval_m.group(1).strip()
+                    if mem_m:
+                        memory = mem_m.group(1).strip()
+                    if goal_m:
+                        next_goal = goal_m.group(1).strip()
 
                 logger.info(f"🧠 Step {step_num}: {thinking_text[:200]}")
+                if evaluation:
+                    logger.info(f"📋 Eval: {evaluation[:120]}")
 
                 self.history.add_tool_calls(content, tool_calls, MessageLabel.AGENT_RESPONSE)
 
@@ -278,6 +338,10 @@ class BrowserAgent:
                         number=step_num,
                         observation=observation_text,
                         thinking=thinking_text,
+                        reflection=reflection_text,
+                        evaluation=evaluation,
+                        memory=memory,
+                        next_goal=next_goal,
                         action_name="",
                         action_result="模型未返回工具调用",
                         screenshot_base64=obs.screenshot_base64,
@@ -299,6 +363,10 @@ class BrowserAgent:
                             number=step_num,
                             observation=observation_text,
                             thinking=thinking_text,
+                            reflection=reflection_text,
+                            evaluation=evaluation,
+                            memory=memory,
+                            next_goal=next_goal,
                             action_name=tool_name,
                             action_args=arguments,
                             action_result=answer,
@@ -356,10 +424,20 @@ class BrowserAgent:
 
                     self.history.add_tool_result(result_text, tool_call_id)
 
+                    # 追踪等待时间（用于等待警告）
+                    if tool_name == "wait":
+                        total_wait_time += 3.0
+                    else:
+                        total_wait_time = 0.0
+
                     step = Step(
                         number=step_num,
                         observation=observation_text,
                         thinking=thinking_text,
+                        reflection=reflection_text,
+                        evaluation=evaluation,
+                        memory=memory,
+                        next_goal=next_goal,
                         action_name=tool_name,
                         action_args=arguments,
                         action_result=result_text,

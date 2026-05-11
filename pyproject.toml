@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gui-agent-vlm"
-version = "0.1.0"
+version = "0.1.1"
 description = "GUI 自动化编排器 — 让 AI 通过纯视觉理解操作任何界面"
 readme = "README.md"
 license = { text = "MIT" }

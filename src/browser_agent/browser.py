@@ -75,6 +75,7 @@ class BrowserSession:
         # POI 缓存
         self.poi_elements: list[dict] = []
         self.poi_centroids: list[dict] = []
+        self.poi_dehydrated_dom: str = ""  # DOM Dehydration 文本（新增）
 
     # ── 生命周期 ──────────────────────────────────
 
@@ -158,23 +159,33 @@ class BrowserSession:
         if result:
             self.poi_elements = result.get("element_descriptions", [])
             self.poi_centroids = result.get("element_centroids", [])
+            self.poi_dehydrated_dom = result.get("dehydrated_dom", "")
 
     @property
     def poi_text(self) -> str:
-        """当前页面所有交互元素的文本描述。"""
-        lines = []
+        """当前页面所有交互元素的双通道描述：DOM Dehydration + 详细属性。"""
+        # 首先生成 DOM Dehydration 文本
+        parts = []
+        if self.poi_dehydrated_dom:
+            parts.append("<dehydrated_dom>\n" + self.poi_dehydrated_dom + "\n</dehydrated_dom>\n")
+
+        # 然后附上详细属性列表（供高级操作参考）
+        attr_lines = []
         for i, elem in enumerate(self.poi_elements):
             tag = elem.get("tag", "unknown").lower()
             text = elem.get("text", "") or ""
             attrs = []
-            for k in ("value", "placeholder", "aria_label", "name", "role", "title", "scrollable"):
+            for k in ("value", "placeholder", "aria_label", "name", "role", "type", "title", "scrollable", "required", "disabled"):
                 v = elem.get(k)
                 if v is not None and v is not False:
                     attrs.append(f'{k}="{v}"')
             attr_str = " " + " ".join(attrs) if attrs else ""
             text_display = text[:200].replace("\n", "⏎")
-            lines.append(f"- [{i}] <{tag}{attr_str}>{text_display}</{tag}>")
-        return "\n".join(lines)
+            attr_lines.append(f"- [{i}] <{tag}{attr_str}> {text_display}")
+        if attr_lines:
+            parts.append("<element_details>\n" + "\n".join(attr_lines) + "\n</element_details>")
+
+        return "\n".join(parts)
 
     # ── Cookie 持久化 ──────────────────────────────
 
@@ -248,6 +259,7 @@ class BrowserSession:
         # 导航后清除旧 POI，下次截图时会重新检测
         self.poi_elements = []
         self.poi_centroids = []
+        self.poi_dehydrated_dom = ""
 
     async def click(self, mark_id: int):
         """点击指定编号的交互元素。
