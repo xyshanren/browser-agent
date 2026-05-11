@@ -42,12 +42,24 @@ except Exception:
 FIND_POIS_JS = (Path(__file__).parent / "vision" / "find_pois.js").read_text(encoding="utf-8")
 
 
+class TabState:
+    """单个标签页的状态快照。"""
+    __slots__ = ("page", "poi_elements", "poi_centroids", "poi_dehydrated_dom")
+
+    def __init__(self, page: Page):
+        self.page = page
+        self.poi_elements: list[dict] = []
+        self.poi_centroids: list[dict] = []
+        self.poi_dehydrated_dom: str = ""
+
+
 class BrowserSession:
     """Playwright 浏览器会话封装。
 
     负责：
     - 启动/关闭浏览器
     - 页面导航和交互（click/type/scroll）
+    - 标签页管理（创建/切换/关闭/列出）
     - 截图 + POI（Points of Interest）检测
     - 反爬虫规避（Stealth 模式）
     """
@@ -72,15 +84,50 @@ class BrowserSession:
         self._browser: Optional[PlaywrightBrowser] = None
         self._context: Optional[BrowserContext] = None
 
-        # POI 缓存
-        self.poi_elements: list[dict] = []
-        self.poi_centroids: list[dict] = []
-        self.poi_dehydrated_dom: str = ""  # DOM Dehydration 文本（新增）
+        # 多标签页管理
+        self._tabs: dict[int, TabState] = {}     # tab_id → TabState
+        self._current_tab_idx: int = 0            # 当前活跃标签页 ID
+        self._next_tab_id: int = 0                # 自增 ID 分配器
+
+    # ── POI 属性代理（指向当前 tab）───────────────
+
+    @property
+    def poi_elements(self) -> list[dict]:
+        t = self._tabs.get(self._current_tab_idx)
+        return t.poi_elements if t else []
+
+    @poi_elements.setter
+    def poi_elements(self, value: list[dict]):
+        t = self._tabs.get(self._current_tab_idx)
+        if t:
+            t.poi_elements = value
+
+    @property
+    def poi_centroids(self) -> list[dict]:
+        t = self._tabs.get(self._current_tab_idx)
+        return t.poi_centroids if t else []
+
+    @poi_centroids.setter
+    def poi_centroids(self, value: list[dict]):
+        t = self._tabs.get(self._current_tab_idx)
+        if t:
+            t.poi_centroids = value
+
+    @property
+    def poi_dehydrated_dom(self) -> str:
+        t = self._tabs.get(self._current_tab_idx)
+        return t.poi_dehydrated_dom if t else ""
+
+    @poi_dehydrated_dom.setter
+    def poi_dehydrated_dom(self, value: str):
+        t = self._tabs.get(self._current_tab_idx)
+        if t:
+            t.poi_dehydrated_dom = value
 
     # ── 生命周期 ──────────────────────────────────
 
     async def start(self):
-        """启动浏览器。"""
+        """启动浏览器并创建初始标签页。"""
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(headless=self.headless)
 
@@ -94,14 +141,15 @@ class BrowserSession:
         )
         self._context.set_default_timeout(60_000)
 
+        # 创建初始标签页
         page = await self._context.new_page()
         page.set_default_timeout(60_000)
-
-        # 注入 Stealth 脚本（反爬虫）
         await stealth_page(page, navigator_user_agent=False)
-
-        # 注入 POI 检测脚本
         await page.add_init_script(FIND_POIS_JS)
+
+        self._tabs = {0: TabState(page)}
+        self._current_tab_idx = 0
+        self._next_tab_id = 1
 
         # 加载持久化 Cookie
         await self._load_cookies()
@@ -121,14 +169,87 @@ class BrowserSession:
 
     @property
     def current_page(self) -> Optional[Page]:
-        if self._context and self._context.pages:
-            return self._context.pages[-1]
-        return None
+        t = self._tabs.get(self._current_tab_idx)
+        return t.page if t else None
 
     @property
     def current_url(self) -> str:
         page = self.current_page
         return page.url if page else ""
+
+    # ── 页面属性 ──────────────────────────────────
+
+    @property
+    def tab_count(self) -> int:
+        return len(self._tabs)
+
+    @property
+    def current_tab_id(self) -> int:
+        return self._current_tab_idx
+
+    def tab_ids(self) -> list[int]:
+        return sorted(self._tabs.keys())
+
+    def tab_info(self, tab_id: int) -> Optional[dict]:
+        t = self._tabs.get(tab_id)
+        if not t:
+            return None
+        try:
+            url = t.page.url
+            title = t.page.title
+        except Exception:
+            url = ""
+            title = ""
+        return {"id": tab_id, "url": url, "title": title, "current": tab_id == self._current_tab_idx}
+
+    def list_tabs_info(self) -> list[dict]:
+        return [self.tab_info(tid) for tid in self.tab_ids() if self.tab_info(tid)]
+
+    async def open_tab(self, url: str = "") -> int:
+        """创建新标签页，返回 tab_id。"""
+        page = await self._context.new_page()
+        page.set_default_timeout(60_000)
+        await stealth_page(page, navigator_user_agent=False)
+        await page.add_init_script(FIND_POIS_JS)
+
+        tab_id = self._next_tab_id
+        self._next_tab_id += 1
+        self._tabs[tab_id] = TabState(page)
+
+        if url:
+            await page.goto(url, wait_until="domcontentloaded")
+
+        logger.info(f"📑 打开标签页 [{tab_id}]: {url or '(空白)'}")
+        return tab_id
+
+    async def close_tab(self, tab_id: int) -> bool:
+        """关闭指定标签页。不允许关闭最后一个。"""
+        if tab_id not in self._tabs:
+            return False
+        if len(self._tabs) <= 1:
+            logger.warning("⚠️ 不能关闭最后一个标签页")
+            return False
+
+        t = self._tabs.pop(tab_id)
+        try:
+            await t.page.close()
+        except Exception:
+            pass
+
+        # 如果关闭的是当前 tab，切换到第一个可用 tab
+        if self._current_tab_idx == tab_id:
+            self._current_tab_idx = next(iter(sorted(self._tabs.keys())))
+
+        logger.info(f"📑 关闭标签页 [{tab_id}]")
+        return True
+
+    async def switch_tab(self, tab_id: int) -> bool:
+        """切换到指定标签页。"""
+        if tab_id not in self._tabs:
+            return False
+        self._current_tab_idx = tab_id
+        logger.info(f"📑 切换到标签页 [{tab_id}]: {self.current_url}")
+        return True
 
     # ── POI 检测 ──────────────────────────────────
 

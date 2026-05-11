@@ -27,27 +27,42 @@ SYSTEM_PROMPT_TEMPLATE = """You are Browser-Agent, an AI assistant that can perf
 
 <output_format>
 For each step you MUST respond with:
-1. <observation>Briefly describe what you see on the screen.</observation>
+1. <observation>Briefly describe what you see on the screen, focusing on elements relevant to the task.</observation>
 2. <thinking>Explain your reasoning about what to do next to complete the task.</thinking>
 3. <reflection>
-evaluation_previous_goal: "ASSESS your last action result. Use one word verdict (SUCCESS/FAILURE/UNCERTAIN) then explain why. If the page didn't change after your action, assume your action failed."
-memory: "NOTE important context you need to remember for future steps — what you found, what you already tried, current progress."
-next_goal: "STATE your immediate next goal in one clear sentence."
+evaluation_previous_goal: "START" (step 0) or "SUCCESS/FAILURE/UNCERTAIN: why". If the page didn't change after your action, assume FAILURE.
+memory: "Key context to remember for future steps — what you found, what you already tried, your current progress."
+next_goal: "Your immediate next goal in one clear sentence."
 </reflection>
-4. A tool call (click/type_text/goto/finish/etc.) to perform the next action.
+4. A tool call (click/type_text/goto/finish/etc.) to execute your next action.
 </output_format>
 
 <browser_rules>
-- Use the "finish" tool when the task is fully completed.
 - Be precise with element IDs (mark_id) from the numbered markers in the screenshot.
-- If an action fails (e.g. mark_id invalid, page didn't change), try a different approach.
-- Clicking only works on elements that have a visible numbered marker in the screenshot.
-- If no markers are visible, the page may not be loaded — use wait or scroll.
+- Only interact with elements that have a visible numbered marker. If no markers are visible, the page may not be loaded — use wait or scroll first.
+- The <dehydrated_dom> shows all interactive elements as a numbered tree. Use it to understand what's available — each [N] corresponds to the marker in the screenshot.
+- New elements since your last action are marked with *[N] in the DOM tree. They appeared after your action — pay attention to them.
+- If an action fails (mark_id invalid, no visible change), try a different approach.
+- Do not repeat the same action more than 3 times without seeing a change.
 - If a CAPTCHA or bot verification appears, use wait_for_user to let the human handle it.
-- Do not repeat the same action more than 3 times without seeing a change in the page.
-- The <dehydrated_dom> shows all interactive elements as a numbered tree. Use it to understand what's available on the page — each [N] corresponds to the marker in the screenshot.
-- New elements since last step are marked with *[N]. They appeared after your last action — pay attention to them.
-</browser_rules>"""
+</browser_rules>
+
+<reasoning_rules>
+- Analyze the <dehydrated_dom> first: it tells you exactly which elements are available before you search the screenshot.
+- Compare the current page state with your last action's expected outcome. If the page looks the same, your action likely failed.
+- Track your progress: what have you accomplished so far vs what remains from the task.
+- If you are stuck (same action 3+ times, no change), try a completely different approach — scroll for more context, navigate back, or use a different element.
+- Use the *[N] markers to detect if the page changed after your action — new elements appearing means something happened.
+- If expected elements are missing from <dehydrated_dom>, try scrolling or waiting.
+</reasoning_rules>
+
+<task_completion_rules>
+- Call finish ONLY when you have fully answered the user's request.
+- If you have the information the user asked for, call finish immediately with the answer.
+- If you are stuck and cannot make progress after multiple attempts, call finish with what you have so far.
+- The finish tool's "answer" field is your final response to the user — concise and informative.
+- If the task is impossible (login wall, CAPTCHA, broken page), call finish explaining why.
+</task_completion_rules>"""
 
 
 @dataclass
@@ -238,6 +253,7 @@ class BrowserAgent:
 
         # 累积等待时间（用于注入等待警告）
         total_wait_time = 0.0
+        empty_step_count = 0  # 连续空输出计数（用于自动兜底）
 
         try:
             for step_num in range(self.max_steps):
@@ -333,7 +349,27 @@ class BrowserAgent:
 
                 # ── ACT: 执行工具调用 ──
                 if not tool_calls:
-                    logger.warning("⚠️ 模型未返回工具调用")
+                    empty_step_count += 1
+                    logger.warning(f"⚠️ 模型未返回工具调用 (连续 {empty_step_count} 次)")
+
+                    # 连续 3 次空输出 → 自动 finish 兜底
+                    if empty_step_count >= 3:
+                        fallback_text = thinking_text[:200] or "模型连续无法返回有效动作，自动终止任务"
+                        logger.warning(f"🛟 连续 {empty_step_count} 次空输出，自动 finish")
+                        self.history.add_tool_result(fallback_text, "auto_fallback")
+                        step = Step(
+                            number=step_num, finished=True,
+                            observation=observation_text, thinking=thinking_text,
+                            reflection=reflection_text, evaluation=evaluation,
+                            memory=memory, next_goal=next_goal,
+                            action_name="finish",
+                            action_result=fallback_text,
+                            screenshot_base64=obs.screenshot_base64,
+                        )
+                        self._steps.append(step)
+                        yield step
+                        return
+
                     step = Step(
                         number=step_num,
                         observation=observation_text,
@@ -349,6 +385,9 @@ class BrowserAgent:
                     self._steps.append(step)
                     yield step
                     continue
+
+                # 成功拿到工具调用，重置空输出计数
+                empty_step_count = 0
 
                 finished = False
                 action_index = 0

@@ -95,8 +95,14 @@ BROWSER_TOOLS = [
         "type": "function",
         "function": {
             "name": "wait",
-            "description": "等待 3 秒，适用于页面正在加载或需要等待的情况",
-            "parameters": {"type": "object", "properties": {}},
+            "description": "等待指定秒数，适用于页面正在加载或需要等待动画完成。不要等待超过 3 秒，如果页面没变化换个策略。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "seconds": {"type": "number", "description": "等待秒数（1-10）", "default": 3},
+                },
+                "required": [],
+            },
         },
     },
     {
@@ -172,6 +178,57 @@ BROWSER_TOOLS = [
             },
         },
     },
+    # ── 多标签页工具 ──
+    {
+        "type": "function",
+        "function": {
+            "name": "open_tab",
+            "description": "打开一个新的浏览器标签页并导航到指定 URL。切换到新标签页。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要打开的 URL"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "switch_tab",
+            "description": "切换到指定编号的标签页。使用 list_tabs 查看所有标签页及其编号。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tab_id": {"type": "integer", "description": "目标标签页编号"},
+                },
+                "required": ["tab_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "close_tab",
+            "description": "关闭指定编号的标签页（不能关闭最后一个）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tab_id": {"type": "integer", "description": "要关闭的标签页编号"},
+                },
+                "required": ["tab_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_tabs",
+            "description": "列出所有打开的标签页及其编号、URL、标题。切换标签页后使用此工具确认当前所在标签页。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 # ── 工具名称到浏览器方法映射 ──
@@ -229,10 +286,10 @@ async def tool_reload(browser: BrowserSession) -> str:
     return "页面已刷新"
 
 
-async def tool_wait(browser: BrowserSession) -> str:
+async def tool_wait(browser: BrowserSession, seconds: float = 3.0) -> str:
     """执行等待操作。"""
-    await browser.wait()
-    return "已等待 3 秒"
+    await browser.wait(seconds)
+    return f"已等待 {seconds} 秒"
 
 
 async def tool_wait_for_user(browser: BrowserSession, message: str = "") -> str:
@@ -291,6 +348,43 @@ async def tool_finish(browser: BrowserSession, answer: str) -> str:
     return answer
 
 
+# ── 多标签页工具函数 ──
+
+
+async def tool_open_tab(browser: BrowserSession, url: str) -> str:
+    """打开新标签页并导航到 URL。"""
+    tab_id = await browser.open_tab(url)
+    return f"已打开新标签页 [{tab_id}]: {url}"
+
+
+async def tool_switch_tab(browser: BrowserSession, tab_id: int) -> str:
+    """切换到指定标签页。"""
+    success = await browser.switch_tab(tab_id)
+    if not success:
+        return f"错误: 标签页 [{tab_id}] 不存在。当前标签页: {list(browser._tabs.keys())}"
+    return f"已切换到标签页 [{tab_id}]: {browser.current_url}"
+
+
+async def tool_close_tab(browser: BrowserSession, tab_id: int) -> str:
+    """关闭指定标签页。"""
+    success = await browser.close_tab(tab_id)
+    if not success:
+        return f"错误: 无法关闭标签页 [{tab_id}]（不存在或只剩最后一个）"
+    return f"已关闭标签页 [{tab_id}]"
+
+
+async def tool_list_tabs(browser: BrowserSession) -> str:
+    """列出所有标签页。"""
+    infos = browser.list_tabs_info()
+    if not infos:
+        return "没有打开的标签页"
+    lines = ["打开的标签页:"]
+    for info in infos:
+        marker = " ← 当前" if info["current"] else ""
+        lines.append(f"  [{info['id']}] {info['title'][:60]} — {info['url'][:80]}{marker}")
+    return "\n".join(lines)
+
+
 # ── 工具调度 ──
 
 
@@ -309,6 +403,10 @@ async def execute_tool(browser: BrowserSession, tool_name: str, arguments: dict)
         "hover": tool_hover,
         "extract_text": tool_extract_text,
         "finish": tool_finish,
+        "open_tab": tool_open_tab,
+        "switch_tab": tool_switch_tab,
+        "close_tab": tool_close_tab,
+        "list_tabs": tool_list_tabs,
     }
 
     func = tool_map.get(tool_name)

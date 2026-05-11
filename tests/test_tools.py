@@ -8,9 +8,9 @@ from browser_agent.tools.browser_tools import BROWSER_TOOLS, parse_tool_call, ex
 def test_tool_schemas():
     """验证工具 Schema 定义完整性。"""
     tool_names = {t["function"]["name"] for t in BROWSER_TOOLS}
-    expected = {"goto", "click", "type_text", "scroll", "go_back", "reload", "wait", "wait_for_user", "finish", "press_key", "hover", "extract_text"}
+    expected = {"goto", "click", "type_text", "scroll", "go_back", "reload", "wait", "wait_for_user", "finish", "press_key", "hover", "extract_text", "open_tab", "switch_tab", "close_tab", "list_tabs"}
     assert tool_names == expected, f"工具不匹配: {tool_names} vs {expected}"
-    assert len(BROWSER_TOOLS) == 12, f"期望 12 个工具，实际 {len(BROWSER_TOOLS)}"
+    assert len(BROWSER_TOOLS) == 16, f"期望 16 个工具，实际 {len(BROWSER_TOOLS)}"
 
     # 验证每个工具都有 description 和 parameters
     for t in BROWSER_TOOLS:
